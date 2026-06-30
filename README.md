@@ -1,0 +1,42 @@
+# BOOX Sync (Obsidian plugin)
+
+One-way background sync of your BOOX/Onyx cloud into your Obsidian vault: book
+highlights as notes, notebook/memo preview images, and your files as attachments.
+BOOX is the source of truth — the plugin never writes back.
+
+## Build
+
+```bash
+cd app/obsidian-plugin
+npm install
+npm run build      # type-checks, then produces main.js
+npm test           # runs the pure-core unit tests
+```
+
+## Install into a vault (manual)
+
+Copy three files into `<your-vault>/.obsidian/plugins/boox-sync/`:
+
+- `manifest.json`
+- `main.js` (from the build)
+- *(no styles.css is required)*
+
+Then in Obsidian: **Settings → Community plugins → enable "BOOX Sync"**.
+(Or use [BRAT](https://github.com/TfTHacker/obsidian42-brat) pointed at this repo.)
+
+## Connect
+
+1. **Settings → BOOX Sync → Backend URL** — your deployed backend (e.g. `https://boox.example.com`).
+2. **Connect** → pick your region → enter your Onyx email → **Send code** → type the 6-digit code → **Connect**.
+3. The plugin stores a revocable **API key** (not your Onyx password). It syncs on
+   startup, every N minutes, and on demand via the command palette (**"BOOX Sync: Sync now"**)
+   or the **Sync now** button in settings.
+
+## Notes
+
+- The API key lives in `.obsidian/plugins/boox-sync/data.json`. If you sync your
+  vault (iCloud / Obsidian Sync / git), the key travels with it — it is revocable
+  via **Disconnect**. Consider git-ignoring `.obsidian/plugins/*/data.json`.
+- The plugin only manages files it wrote (tracked in `<sync-folder>/.boox-sync.json`).
+  If you edit a synced note, it will not be overwritten — the plugin skips it and
+  keeps your version.
