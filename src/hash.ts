@@ -19,10 +19,15 @@ export function hashHighlights(items: Highlight[]): string {
   return hashString(norm);
 }
 
+// Bump when the on-disk asset layout changes so already-synced notebooks/memos
+// are seen as changed and get rewritten (new embeds + assets, old ones GC'd).
+// v2: render: asset files now carry a `.png` extension so Obsidian embeds them.
+const ASSET_LAYOUT = "v2";
+
 export function hashNotebook(nb: Notebook): string {
-  return hashString(`${nb.title}|${nb.updatedAt}|${nb.pages}|${[...nb.images].sort().join(",")}`);
+  return hashString(`${ASSET_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${[...nb.images].sort().join(",")}`);
 }
 
 export function hashMemo(m: Memo): string {
-  return hashString(`${m.id}|${m.pages}|${[...m.images].sort().join(",")}`);
+  return hashString(`${ASSET_LAYOUT}|${m.id}|${m.pages}|${[...m.images].sort().join(",")}`);
 }

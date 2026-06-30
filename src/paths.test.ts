@@ -27,6 +27,13 @@ describe("path builders", () => {
     expect(assetPath("BOOX", "note1", "uid/note/note1/note1.png"))
       .toBe("BOOX/_assets/note1/note1.png");
   });
+  it("gives render: refs a .png extension so Obsidian embeds them", () => {
+    // render:<id>/<pageId> -> _assets/<id>/<pageId>.png  (Obsidian only embeds
+    // files with a recognized image extension; the ref itself has none)
+    expect(assetPath("BOOX", "n1", "render:n1/pA")).toBe("BOOX/_assets/n1/pA.png");
+    // memo composite page: render:<id>/0
+    expect(assetPath("BOOX", "m1", "render:m1/0")).toBe("BOOX/_assets/m1/0.png");
+  });
   it("returns the parent folder of a path", () => {
     expect(parentFolder("BOOX/Files/paper.pdf")).toBe("BOOX/Files");
     expect(parentFolder("toplevel")).toBe("");

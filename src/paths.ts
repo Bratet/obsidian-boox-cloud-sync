@@ -23,7 +23,11 @@ export function filePath(folder: string, name: string): string {
 }
 
 export function assetPath(folder: string, id: string, ossKey: string): string {
-  const base = sanitizeName(ossKey.split("/").pop() || "asset.png");
+  const last = ossKey.split("/").pop() || "asset.png";
+  // `render:<id>/<page>` refs (server-rendered handwriting) carry no file
+  // extension; Obsidian only embeds files with a recognized image extension,
+  // so name the asset `<page>.png`. OSS keys already end in their extension.
+  const base = ossKey.startsWith("render:") ? `${sanitizeName(last)}.png` : sanitizeName(last);
   return `${folder}/_assets/${sanitizeName(id)}/${base}`;
 }
 

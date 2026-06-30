@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { planSync } from "./sync";
+import { hashString } from "./hash";
 import type { Manifest, SyncState, BooxSettings } from "./types";
-import { emptyState, bookKey, notebookKey } from "./state";
+import { emptyState, bookKey, notebookKey, memoKey } from "./state";
 
 const SYNC = "2026-06-30T00:00:00.000Z";
 
@@ -47,6 +48,29 @@ describe("planSync", () => {
     expect(nb && nb.kind === "note" && nb.assets[0].path).toBe("BOOX/_assets/n1/n1.png");
     const file = a.find((x) => x.kind === "file");
     expect(file && file.kind === "file" && file.path).toBe("BOOX/Files/p.pdf");
+  });
+
+  it("re-syncs notebooks/memos stored under the previous asset layout (migration)", () => {
+    // A vault synced before render: refs got a `.png` extension holds items keyed by the
+    // OLD hash formula (no layout-version prefix). The layout bump must make planSync
+    // re-emit so the broken extensionless embeds get rewritten and old assets GC'd.
+    const oldNotebookHash = hashString("T|5|1|render:n1/pA"); // pre-bump hashNotebook formula
+    const oldMemoHash = hashString("m1|1|render:m1/0"); // pre-bump hashMemo formula
+    const m = manifest({
+      highlights: [],
+      notebooks: [{ id: "n1", pages: 1, previewKey: "uid/note/n1/n1.png", images: ["render:n1/pA"], title: "T", updatedAt: 5 }],
+      memos: [{ id: "m1", pages: 1, images: ["render:m1/0"] }],
+    });
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [notebookKey("n1")]: { hash: oldNotebookHash, path: "BOOX/Notebooks/T.md" },
+        [memoKey("m1")]: { hash: oldMemoHash, path: "BOOX/Memos/m1.md" },
+      },
+    };
+    const a = planSync(m, prev, settings(), SYNC);
+    expect(a.find((x) => x.itemKey === notebookKey("n1"))?.kind).toBe("note");
+    expect(a.find((x) => x.itemKey === memoKey("m1"))?.kind).toBe("note");
   });
 
   it("skips a file unchanged by size", () => {
