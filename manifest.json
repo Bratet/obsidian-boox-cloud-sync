@@ -1,0 +1,9 @@
+{
+  "id": "boox-sync",
+  "name": "BOOX Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "One-way background sync of your BOOX/Onyx cloud (highlights, notebooks, memos, files) into your vault.",
+  "author": "Ahmed Mrabet",
+  "isDesktopOnly": true
+}

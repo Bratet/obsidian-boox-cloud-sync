@@ -1,0 +1,20 @@
+{
+  "name": "boox-sync",
+  "version": "0.1.0",
+  "description": "One-way background sync of your BOOX/Onyx cloud into Obsidian.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20",
+    "esbuild": "^0.21.5",
+    "obsidian": "^1.5.7",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}
