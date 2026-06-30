@@ -13,7 +13,7 @@ export interface AssetDownload {
 export type SyncAction =
   | { kind: "note"; itemKey: string; path: string; content: string; hash: string; assets: AssetDownload[] }
   | { kind: "file"; itemKey: string; ossKey: string; path: string; size: number | null; hash: string }
-  | { kind: "delete"; itemKey: string; path: string };
+  | { kind: "delete"; itemKey: string; path: string; assets: string[] };
 
 function managedByEnabledType(key: string, s: BooxSettings): boolean {
   if (key.startsWith("highlight-book:")) return s.syncHighlights;
@@ -87,7 +87,7 @@ export function planSync(
     for (const key of Object.keys(prev.items)) {
       if (seen.has(key)) continue;
       if (!managedByEnabledType(key, settings)) continue;
-      actions.push({ kind: "delete", itemKey: key, path: prev.items[key].path });
+      actions.push({ kind: "delete", itemKey: key, path: prev.items[key].path, assets: prev.items[key].assets ?? [] });
     }
   }
 
@@ -115,10 +115,12 @@ export async function executeSync(
     try {
       if (a.kind === "note") {
         const prevItem = prev.items[a.itemKey];
-        if (prevItem?.written && (await io.exists(a.path))) {
-          const disk = await io.read(a.path);
+        // Guard against overwriting user edits — check the file we previously wrote (prevItem.path),
+        // not a.path, so a title-change (rename) correctly detects edits in the old file.
+        if (prevItem?.written && (await io.exists(prevItem.path))) {
+          const disk = await io.read(prevItem.path);
           if (hashString(disk) !== prevItem.written) {
-            summary.skippedUserEdited.push(a.path); // user edited since we wrote — preserve it
+            summary.skippedUserEdited.push(prevItem.path); // user edited since we wrote — preserve it
             continue;
           }
         }
@@ -128,6 +130,17 @@ export async function executeSync(
           summary.downloaded++;
         }
         await io.write(a.path, a.content);
+        // GC stale assets: remove any previously-written asset not in the new set
+        const newAssetPaths = new Set(a.assets.map((x) => x.path));
+        for (const oldAssetPath of (prevItem?.assets ?? [])) {
+          if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
+            await io.remove(oldAssetPath);
+          }
+        }
+        // Rename cleanup: if the title changed, remove the now-orphaned old-path note
+        if (prevItem && prevItem.path !== a.path && (await io.exists(prevItem.path))) {
+          await io.remove(prevItem.path);
+        }
         items[a.itemKey] = {
           hash: a.hash,
           path: a.path,
@@ -143,6 +156,9 @@ export async function executeSync(
       } else {
         // delete
         if (await io.exists(a.path)) await io.remove(a.path);
+        for (const assetPath of (a.assets ?? [])) {
+          if (await io.exists(assetPath)) await io.remove(assetPath);
+        }
         delete items[a.itemKey];
         summary.deleted++;
       }

@@ -10,6 +10,7 @@ export default class BooxSyncPlugin extends Plugin {
   settings!: BooxSettings;
   private syncing = false;
   private intervalId: number | null = null;
+  private startupTimeout: number | null = null;
 
   // Uses Obsidian's requestUrl so requests bypass browser CORS in the Electron renderer.
   transport: HttpTransport = async (req) => {
@@ -29,12 +30,14 @@ export default class BooxSyncPlugin extends Plugin {
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => this.runSync("manual") });
     this.rescheduleInterval();
     // Startup sync after a short delay so the vault is ready.
-    window.setTimeout(() => {
+    this.startupTimeout = window.setTimeout(() => {
+      this.startupTimeout = null;
       if (this.settings.apiKey) this.runSync("startup");
     }, 4000);
   }
 
   onunload() {
+    if (this.startupTimeout !== null) window.clearTimeout(this.startupTimeout);
     if (this.intervalId !== null) window.clearInterval(this.intervalId);
   }
 

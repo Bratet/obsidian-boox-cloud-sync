@@ -67,4 +67,17 @@ describe("planSync", () => {
     expect(del[0].kind).toBe("delete");
     expect(del[0].itemKey).toBe(bookKey("gone"));
   });
+
+  it("planSync delete carries assets", () => {
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: { [bookKey("gone")]: { hash: "h", path: "BOOX/Highlights/Gone.md", assets: ["x.png"] } },
+    };
+    const m = manifest({ highlights: [] });
+    const del = planSync(m, prev, settings({ deleteRemoved: true }), SYNC);
+    expect(del).toHaveLength(1);
+    const d = del[0];
+    expect(d.kind).toBe("delete");
+    expect(d.kind === "delete" && d.assets).toEqual(["x.png"]);
+  });
 });
