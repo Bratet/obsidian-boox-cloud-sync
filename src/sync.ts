@@ -1,8 +1,9 @@
-import type { Manifest, SyncState, BooxSettings } from "./types";
-import { hashHighlights, hashNotebook, hashMemo } from "./hash";
+import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
+import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook, renderNotebook, renderMemo } from "./render";
 import { highlightPath, notebookPath, memoPath, filePath, assetPath } from "./paths";
 import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
+import type { VaultIO, ObjectFetcher } from "./ports";
 
 export interface AssetDownload {
   ossKey: string;
@@ -91,4 +92,64 @@ export function planSync(
   }
 
   return actions;
+}
+
+export interface SyncSummary {
+  written: number;
+  downloaded: number;
+  deleted: number;
+  skippedUserEdited: string[];
+  errors: { itemKey: string; message: string }[];
+}
+
+export async function executeSync(
+  actions: SyncAction[],
+  prev: SyncState,
+  io: VaultIO,
+  fetcher: ObjectFetcher,
+): Promise<{ state: SyncState; summary: SyncSummary }> {
+  const items: Record<string, SyncItem> = { ...prev.items };
+  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
+
+  for (const a of actions) {
+    try {
+      if (a.kind === "note") {
+        const prevItem = prev.items[a.itemKey];
+        if (prevItem?.written && (await io.exists(a.path))) {
+          const disk = await io.read(a.path);
+          if (hashString(disk) !== prevItem.written) {
+            summary.skippedUserEdited.push(a.path); // user edited since we wrote — preserve it
+            continue;
+          }
+        }
+        for (const asset of a.assets) {
+          const bytes = await fetcher.object(asset.ossKey);
+          await io.writeBinary(asset.path, bytes);
+          summary.downloaded++;
+        }
+        await io.write(a.path, a.content);
+        items[a.itemKey] = {
+          hash: a.hash,
+          path: a.path,
+          written: hashString(a.content),
+          assets: a.assets.map((x) => x.path),
+        };
+        summary.written++;
+      } else if (a.kind === "file") {
+        const bytes = await fetcher.object(a.ossKey);
+        await io.writeBinary(a.path, bytes);
+        items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size };
+        summary.downloaded++;
+      } else {
+        // delete
+        if (await io.exists(a.path)) await io.remove(a.path);
+        delete items[a.itemKey];
+        summary.deleted++;
+      }
+    } catch (e: any) {
+      summary.errors.push({ itemKey: a.itemKey, message: e?.message || String(e) });
+    }
+  }
+
+  return { state: { version: prev.version, lastSync: prev.lastSync, items }, summary };
 }
