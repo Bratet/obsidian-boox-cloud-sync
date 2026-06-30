@@ -84,10 +84,13 @@ export default class BooxSyncPlugin extends Plugin {
   private io(): VaultIO {
     const adapter = this.app.vault.adapter;
     const ensureParent = async (path: string) => {
-      const i = path.lastIndexOf("/");
-      if (i > 0) {
-        const dir = path.slice(0, i);
-        if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+      const parts = path.split("/");
+      parts.pop(); // remove the file name — only create ancestors
+      let accumulated = "";
+      for (const part of parts) {
+        if (!part) continue;
+        accumulated = accumulated ? `${accumulated}/${part}` : part;
+        if (!(await adapter.exists(accumulated))) await adapter.mkdir(accumulated);
       }
     };
     return {
