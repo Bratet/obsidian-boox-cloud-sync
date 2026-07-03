@@ -26,11 +26,17 @@ Then in Obsidian: **Settings → Community plugins → enable "BOOX Sync"**.
 
 ## Connect
 
-1. **Settings → BOOX Sync → Backend URL** — your deployed backend (e.g. `https://boox.example.com`).
-2. **Connect** → pick your region → enter your Onyx email → **Send code** → type the 6-digit code → **Connect**.
-3. The plugin stores a revocable **API key** (not your Onyx password). It syncs on
-   startup, every N minutes, and on demand via the command palette (**"BOOX Sync: Sync now"**)
-   or the **Sync now** button in settings.
+1. **Settings → BOOX Sync → Backend URL** — your deployed app (e.g. `https://boox.example.com`).
+2. **Connect** — two ways to get the API key:
+   - **Recommended:** log in to the web dashboard, click **Connect Obsidian** — it mints
+     a plugin key from your existing session (shown once). Paste it into the modal's
+     **API key** field → **Use key**. No email round-trip in Obsidian.
+   - Or log in from the modal directly: pick your region → Onyx email → **Send code**
+     → type the 6-digit code → **Connect**.
+3. Either way the plugin stores a revocable **API key** issued by *your app* (never your
+   Onyx password; the Onyx token stays server-side). It syncs on startup, every N minutes,
+   and on demand via the command palette (**"BOOX Sync: Sync now"**) or the **Sync now**
+   button in settings.
 
 ## Notes
 

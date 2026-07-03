@@ -7,6 +7,7 @@ export class ConnectModal extends Modal {
   private email = "";
   private code = "";
   private sent = false;
+  private pastedKey = "";
 
   constructor(app: App, private plugin: BooxSyncPlugin, private onDone: () => void) {
     super(app);
@@ -28,6 +29,18 @@ export class ConnectModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Connect to BOOX" });
+
+    contentEl.createEl("p", {
+      text: "Recommended: open your BOOX dashboard in the browser, click “Connect Obsidian”, and paste the key here.",
+    });
+    new Setting(contentEl)
+      .setName("API key")
+      .addText((t) =>
+        t.setPlaceholder("boox_…").setValue(this.pastedKey).onChange((v) => (this.pastedKey = v.trim())),
+      )
+      .addButton((b) => b.setButtonText("Use key").setCta().onClick(() => this.useKey()));
+
+    contentEl.createEl("h3", { text: "Or log in with your Onyx email" });
 
     new Setting(contentEl).setName("Region").addDropdown((d) =>
       d
@@ -52,6 +65,26 @@ export class ConnectModal extends Modal {
       new Setting(contentEl).addButton((b) =>
         b.setButtonText("Connect").setCta().onClick(() => this.connect()),
       );
+    }
+  }
+
+  private async useKey() {
+    if (!this.pastedKey) {
+      new Notice("Paste an API key first.");
+      return;
+    }
+    try {
+      // Validate against the backend before saving — a typo'd key fails here, not
+      // silently on the next background sync.
+      const client = new BooxClient(this.plugin.settings.backendUrl, this.plugin.transport, this.pastedKey);
+      const res = await client.me();
+      await this.plugin.connectWith(this.pastedKey, { uid: res.account.uid, email: res.account.email ?? "" });
+      new Notice(`Connected as ${res.account.email ?? res.account.uid}.`);
+      this.close();
+      this.onDone();
+      this.plugin.runSync("manual");
+    } catch (e: any) {
+      new Notice(`Key check failed: ${e.message}`);
     }
   }
 

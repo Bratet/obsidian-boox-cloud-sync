@@ -48,6 +48,17 @@ describe("BooxClient", () => {
     expect(calls[0].url).toContain("/api/object?key=uid%2Fnote%2Fn1%2Fn1.png");
   });
 
+  it("me() validates a pasted key and returns the account", async () => {
+    const { transport, calls } = fakeTransport(() => ({
+      status: 200, text: JSON.stringify({ account: { uid: "u1", email: "a@b.c" } }),
+    }));
+    const c = new BooxClient("http://host", transport, "boox_pasted");
+    const res = await c.me();
+    expect(res.account.email).toBe("a@b.c");
+    expect(calls[0].url).toBe("http://host/api/me");
+    expect(calls[0].headers["Authorization"]).toBe("Bearer boox_pasted");
+  });
+
   it("throws BooxApiError with the detail on a non-2xx", async () => {
     const { transport } = fakeTransport(() => ({ status: 401, text: JSON.stringify({ detail: "invalid api key" }) }));
     const c = new BooxClient("http://host", transport, "bad");
