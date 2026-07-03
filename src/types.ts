@@ -1,4 +1,4 @@
-// Mirrors the backend manifest (app/backend/app.py :: assemble_sources).
+// Mirrors the backend manifest (app/backend/manifest.py :: assemble_sources).
 export interface Highlight {
   id: string;
   bookId: string;
@@ -16,6 +16,14 @@ export interface Notebook {
   images: string[];
   title: string;
   updatedAt: number | null;
+  folderId?: string | null; // containing device folder; null/absent = root
+}
+
+// A Notes-app folder from the device tree (NOTE_TREE type-0 doc).
+export interface BooxFolder {
+  id: string;
+  title: string;
+  parentId: string | null;
 }
 
 export interface Memo {
@@ -33,6 +41,7 @@ export interface FileItem {
 
 export interface Manifest {
   account: { uid: string | null };
+  folders?: BooxFolder[]; // optional: older backends don't send it
   notebooks: Notebook[];
   memos: Memo[];
   files: FileItem[];

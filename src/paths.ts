@@ -1,3 +1,5 @@
+import type { BooxFolder } from "./types";
+
 // Characters Obsidian / the OS reject in note titles or that have wiki-link meaning.
 const ILLEGAL = /[\\/:*?"<>|#^[\]]/g;
 
@@ -6,12 +8,34 @@ export function sanitizeName(name: string): string {
   return cleaned || "Untitled";
 }
 
+// Root→leaf directory names for a notebook's containing folder, sanitized for
+// the vault. An unknown folderId means the folder doc hasn't synced (or was
+// deleted) — fall back to the root rather than invent a directory. A missing
+// parent link truncates the chain there; a corrupt parent cycle terminates.
+export function folderChain(
+  folders: BooxFolder[] | undefined,
+  folderId: string | null | undefined,
+): string[] {
+  if (!folderId || !folders?.length) return [];
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let cur = byId.get(folderId);
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    chain.unshift(sanitizeName(cur.title));
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  return chain;
+}
+
 export function highlightPath(folder: string, bookTitle: string): string {
   return `${folder}/Highlights/${sanitizeName(bookTitle)}.md`;
 }
 
-export function notebookPath(folder: string, title: string): string {
-  return `${folder}/Notebooks/${sanitizeName(title)}.md`;
+export function notebookPath(folder: string, title: string, subdirs: string[] = []): string {
+  const mid = subdirs.length ? `${subdirs.join("/")}/` : "";
+  return `${folder}/Notebooks/${mid}${sanitizeName(title)}.md`;
 }
 
 export function memoPath(folder: string, id: string): string {

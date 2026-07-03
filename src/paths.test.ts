@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeName, highlightPath, notebookPath, memoPath, filePath, assetPath, parentFolder,
+  folderChain,
 } from "./paths";
 
 describe("sanitizeName", () => {
@@ -37,5 +38,37 @@ describe("path builders", () => {
   it("returns the parent folder of a path", () => {
     expect(parentFolder("BOOX/Files/paper.pdf")).toBe("BOOX/Files");
     expect(parentFolder("toplevel")).toBe("");
+  });
+  it("nests notebooks under their device folder chain", () => {
+    expect(notebookPath("BOOX", "Journal", ["Startup & SaaS", "Alif Sessions"]))
+      .toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Journal.md");
+    expect(notebookPath("BOOX", "Journal", [])).toBe("BOOX/Notebooks/Journal.md");
+  });
+});
+
+describe("folderChain", () => {
+  const folders = [
+    { id: "fB", title: "Startup & SaaS", parentId: null },
+    { id: "fA", title: "Alif: Sessions", parentId: "fB" },
+  ];
+  it("builds the sanitized root→leaf directory chain", () => {
+    expect(folderChain(folders, "fA")).toEqual(["Startup & SaaS", "Alif Sessions"]);
+    expect(folderChain(folders, "fB")).toEqual(["Startup & SaaS"]);
+  });
+  it("treats an unknown or absent folder as root", () => {
+    expect(folderChain(folders, "nope")).toEqual([]);
+    expect(folderChain(folders, null)).toEqual([]);
+    expect(folderChain(folders, undefined)).toEqual([]);
+    expect(folderChain(undefined, "fA")).toEqual([]);
+  });
+  it("stops at a missing parent link — partial chain, never a crash", () => {
+    expect(folderChain([{ id: "fA", title: "A", parentId: "ghost" }], "fA")).toEqual(["A"]);
+  });
+  it("terminates on a corrupt parent cycle", () => {
+    const cyc = [
+      { id: "f1", title: "One", parentId: "f2" },
+      { id: "f2", title: "Two", parentId: "f1" },
+    ];
+    expect(folderChain(cyc, "f1")).toEqual(["Two", "One"]);
   });
 });

@@ -1,7 +1,7 @@
 import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
 import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook, renderNotebook, renderMemo } from "./render";
-import { highlightPath, notebookPath, memoPath, filePath, assetPath } from "./paths";
+import { highlightPath, notebookPath, memoPath, filePath, assetPath, folderChain } from "./paths";
 import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
@@ -47,13 +47,29 @@ export function planSync(
   }
 
   if (settings.syncNotebooks) {
+    // Mirror the device folder tree. Two notebooks with the same title in the
+    // same folder would collide on one .md, so collisions get a short id
+    // suffix — deterministically, on every member of the colliding set.
+    const naturalPath = (nb: (typeof manifest.notebooks)[number]) =>
+      notebookPath(folder, nb.title, folderChain(manifest.folders, nb.folderId));
+    const pathCount = new Map<string, number>();
+    for (const nb of manifest.notebooks) {
+      const p = naturalPath(nb);
+      pathCount.set(p, (pathCount.get(p) ?? 0) + 1);
+    }
     for (const nb of manifest.notebooks) {
       const key = notebookKey(nb.id);
       seen.add(key);
       const hash = hashNotebook(nb);
-      const path = notebookPath(folder, nb.title);
+      let path = naturalPath(nb);
+      if ((pathCount.get(path) ?? 0) > 1) {
+        path = notebookPath(folder, `${nb.title} (${nb.id.slice(0, 8)})`,
+          folderChain(manifest.folders, nb.folderId));
+      }
       const assets: AssetDownload[] = nb.images.map((ossKey) => ({ ossKey, path: assetPath(folder, nb.id, ossKey) }));
-      if (prev.items[key]?.hash === hash) continue;
+      // A pure folder move keeps the hash but changes the path — still re-emit,
+      // so the note lands at its new home and rename cleanup drops the old file.
+      if (prev.items[key]?.hash === hash && prev.items[key]?.path === path) continue;
       const content = renderNotebook(nb, assets.map((a) => a.path), hash, syncedAt);
       actions.push({ kind: "note", itemKey: key, path, content, hash, assets });
     }
