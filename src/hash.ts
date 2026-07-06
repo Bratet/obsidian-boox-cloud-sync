@@ -28,6 +28,13 @@ export function hashNotebook(nb: Notebook): string {
   return hashString(`${ASSET_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${[...nb.images].sort().join(",")}`);
 }
 
+// Memos have their own layout version: v3 moved them from a .md note +
+// _assets/ images to bare per-date image folders. Kept separate from
+// ASSET_LAYOUT so bumping it doesn't force a re-download of every notebook.
+const MEMO_LAYOUT = "v3";
+
 export function hashMemo(m: Memo): string {
-  return hashString(`${ASSET_LAYOUT}|${m.id}|${m.pages}|${[...m.images].sort().join(",")}`);
+  // Images in device order, NOT sorted — pages are named by position, so a
+  // reorder must re-emit even when the set of refs is unchanged.
+  return hashString(`${MEMO_LAYOUT}|${m.id}|${m.date ?? ""}|${m.pages}|${m.images.join(",")}`);
 }

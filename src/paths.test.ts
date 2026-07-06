@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  sanitizeName, highlightPath, notebookPath, memoPath, filePath, assetPath, parentFolder,
-  folderChain,
+  sanitizeName, highlightPath, notebookPath, filePath, assetPath, parentFolder,
+  folderChain, memoFolderName, memoImagePath,
 } from "./paths";
 
 describe("sanitizeName", () => {
@@ -21,7 +21,6 @@ describe("path builders", () => {
   it("builds typed vault paths under the sync folder", () => {
     expect(highlightPath("BOOX", "The Idea: A Story")).toBe("BOOX/Highlights/The Idea A Story.md");
     expect(notebookPath("BOOX", "Journal")).toBe("BOOX/Notebooks/Journal.md");
-    expect(memoPath("BOOX", "c1abc")).toBe("BOOX/Memos/c1abc.md");
     expect(filePath("BOOX", "paper.pdf")).toBe("BOOX/Files/paper.pdf");
   });
   it("derives a stable asset path from the OSS key basename", () => {
@@ -43,6 +42,23 @@ describe("path builders", () => {
     expect(notebookPath("BOOX", "Journal", ["Startup & SaaS", "Alif Sessions"]))
       .toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Journal.md");
     expect(notebookPath("BOOX", "Journal", [])).toBe("BOOX/Notebooks/Journal.md");
+  });
+});
+
+describe("memo image layout", () => {
+  it("names the memo folder by compact calendar date", () => {
+    expect(memoFolderName("2026-06-11", "c1abc")).toBe("20260611");
+  });
+  it("falls back to the memo id when the date is unknown", () => {
+    expect(memoFolderName(null, "c1abc")).toBe("c1abc");
+    expect(memoFolderName(undefined, "c1abc")).toBe("c1abc");
+  });
+  it("builds <date>_<page>.png paths inside a per-memo folder under Calendar memo", () => {
+    expect(memoImagePath("BOOX", "20260611", "20260611", 1))
+      .toBe("BOOX/Calendar memo/20260611/20260611_1.png");
+    // a collision-suffixed folder keeps the clean date prefix on files
+    expect(memoImagePath("BOOX", "20260611 (aaaa1111)", "20260611", 2))
+      .toBe("BOOX/Calendar memo/20260611 (aaaa1111)/20260611_2.png");
   });
 });
 

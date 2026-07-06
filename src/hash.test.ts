@@ -41,4 +41,13 @@ describe("hashNotebook / hashMemo", () => {
     const m: Memo = { id: "m1", pages: 1, images: [] };
     expect(hashMemo(m)).not.toBe(hashMemo({ ...m, pages: 2 }));
   });
+  it("memo hash changes with the calendar date", () => {
+    const m: Memo = { id: "m1", pages: 1, images: ["render:m1/a"], date: "2026-06-11" };
+    expect(hashMemo(m)).not.toBe(hashMemo({ ...m, date: "2026-06-12" }));
+    expect(hashMemo(m)).not.toBe(hashMemo({ ...m, date: null }));
+  });
+  it("memo hash changes with page ORDER — pages are named by position", () => {
+    const m: Memo = { id: "m1", pages: 2, images: ["render:m1/a", "render:m1/b"], date: "2026-06-11" };
+    expect(hashMemo(m)).not.toBe(hashMemo({ ...m, images: ["render:m1/b", "render:m1/a"] }));
+  });
 });

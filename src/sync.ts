@@ -1,7 +1,10 @@
 import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
 import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
-import { renderHighlightBook, renderNotebook, renderMemo } from "./render";
-import { highlightPath, notebookPath, memoPath, filePath, assetPath, folderChain } from "./paths";
+import { renderHighlightBook, renderNotebook } from "./render";
+import {
+  highlightPath, notebookPath, filePath, assetPath, folderChain,
+  memoFolderName, memoImagePath, parentFolder,
+} from "./paths";
 import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
@@ -12,6 +15,7 @@ export interface AssetDownload {
 
 export type SyncAction =
   | { kind: "note"; itemKey: string; path: string; content: string; hash: string; assets: AssetDownload[] }
+  | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[] } // bare images, no note
   | { kind: "file"; itemKey: string; ossKey: string; path: string; size: number | null; hash: string }
   | { kind: "delete"; itemKey: string; path: string; assets: string[] };
 
@@ -76,15 +80,30 @@ export function planSync(
   }
 
   if (settings.syncMemos) {
+    // Calendar memos sync as bare images: one folder per memo named by its
+    // calendar day, pages named <day>_<n>.png in device order. Two memos on
+    // the same day (shouldn't happen, but cloud data is messy) would collide
+    // on a folder — every member of a colliding set gets a short id suffix.
+    const dirCount = new Map<string, number>();
+    for (const m of manifest.memos) {
+      const d = memoFolderName(m.date, m.id);
+      dirCount.set(d, (dirCount.get(d) ?? 0) + 1);
+    }
     for (const m of manifest.memos) {
       const key = memoKey(m.id);
       seen.add(key);
       const hash = hashMemo(m);
-      const path = memoPath(folder, m.id);
-      const assets: AssetDownload[] = m.images.map((ossKey) => ({ ossKey, path: assetPath(folder, m.id, ossKey) }));
-      if (prev.items[key]?.hash === hash) continue;
-      const content = renderMemo(m, assets.map((a) => a.path), hash, syncedAt);
-      actions.push({ kind: "note", itemKey: key, path, content, hash, assets });
+      const base = memoFolderName(m.date, m.id);
+      const dir = (dirCount.get(base) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
+      const assets: AssetDownload[] = m.images.map((ossKey, i) => ({
+        ossKey, path: memoImagePath(folder, dir, base, i + 1),
+      }));
+      // Content can be unchanged while the target paths move (a colliding memo
+      // appeared and forced the suffix) — compare both before skipping.
+      const prevItem = prev.items[key];
+      if (prevItem?.hash === hash &&
+          (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
+      actions.push({ kind: "images", itemKey: key, hash, assets });
     }
   }
 
@@ -127,6 +146,13 @@ export async function executeSync(
   const items: Record<string, SyncItem> = { ...prev.items };
   const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
 
+  // Removing the last file from a folder leaves an empty directory in the
+  // vault; sweep those best-effort (rmdir throws on non-empty — that's fine).
+  const rmdirIfEmpty = async (dir: string) => {
+    if (!dir || !io.rmdir) return;
+    try { await io.rmdir(dir); } catch { /* not empty or already gone */ }
+  };
+
   for (const a of actions) {
     try {
       if (a.kind === "note") {
@@ -164,6 +190,31 @@ export async function executeSync(
           assets: a.assets.map((x) => x.path),
         };
         summary.written++;
+      } else if (a.kind === "images") {
+        const prevItem = prev.items[a.itemKey];
+        for (const asset of a.assets) {
+          const bytes = await fetcher.object(asset.ossKey);
+          await io.writeBinary(asset.path, bytes);
+          summary.downloaded++;
+        }
+        // GC assets that fell out of the set — deleted pages, or the whole
+        // memo moving folders (date arrived, collision suffix, old layout).
+        const newAssetPaths = new Set(a.assets.map((x) => x.path));
+        const emptied = new Set<string>();
+        for (const oldAssetPath of (prevItem?.assets ?? [])) {
+          if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
+            await io.remove(oldAssetPath);
+            emptied.add(parentFolder(oldAssetPath));
+          }
+        }
+        // Migration from the note layout: the .md this memo used to be.
+        if (prevItem?.path && (await io.exists(prevItem.path))) {
+          await io.remove(prevItem.path);
+          emptied.add(parentFolder(prevItem.path));
+        }
+        for (const dir of emptied) await rmdirIfEmpty(dir);
+        items[a.itemKey] = { hash: a.hash, path: "", assets: a.assets.map((x) => x.path) };
+        summary.written++;
       } else if (a.kind === "file") {
         const bytes = await fetcher.object(a.ossKey);
         await io.writeBinary(a.path, bytes);
@@ -171,10 +222,13 @@ export async function executeSync(
         summary.downloaded++;
       } else {
         // delete
-        if (await io.exists(a.path)) await io.remove(a.path);
+        if (a.path && (await io.exists(a.path))) await io.remove(a.path);
+        const emptied = new Set<string>();
         for (const assetPath of (a.assets ?? [])) {
           if (await io.exists(assetPath)) await io.remove(assetPath);
+          emptied.add(parentFolder(assetPath));
         }
+        for (const dir of emptied) await rmdirIfEmpty(dir);
         delete items[a.itemKey];
         summary.deleted++;
       }

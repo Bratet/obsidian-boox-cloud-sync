@@ -70,7 +70,88 @@ describe("planSync", () => {
     };
     const a = planSync(m, prev, settings(), SYNC);
     expect(a.find((x) => x.itemKey === notebookKey("n1"))?.kind).toBe("note");
-    expect(a.find((x) => x.itemKey === memoKey("m1"))?.kind).toBe("note");
+    expect(a.find((x) => x.itemKey === memoKey("m1"))?.kind).toBe("images");
+  });
+
+  it("emits per-date image downloads for calendar memos", () => {
+    const m = manifest({
+      highlights: [],
+      memos: [{ id: "m1", pages: 2, images: ["render:m1/layA", "render:m1/layB"], date: "2026-06-11" }],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const memo = a.find((x) => x.itemKey === memoKey("m1"));
+    expect(memo?.kind).toBe("images");
+    expect(memo && memo.kind === "images" && memo.assets.map((x) => x.path)).toEqual([
+      "BOOX/Calendar memo/20260611/20260611_1.png",
+      "BOOX/Calendar memo/20260611/20260611_2.png",
+    ]);
+    // device page order is preserved: page 1 is the first image ref
+    expect(memo && memo.kind === "images" && memo.assets[0].ossKey).toBe("render:m1/layA");
+  });
+
+  it("falls back to the memo id folder when the date is unknown", () => {
+    const m = manifest({ highlights: [], memos: [{ id: "m9", pages: 1, images: ["render:m9/l"], date: null }] });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const memo = a.find((x) => x.itemKey === memoKey("m9"));
+    expect(memo && memo.kind === "images" && memo.assets[0].path).toBe("BOOX/Calendar memo/m9/m9_1.png");
+  });
+
+  it("disambiguates two memos on the same date with an id suffix", () => {
+    const m = manifest({
+      highlights: [],
+      memos: [
+        { id: "aaaa1111bbbb", pages: 1, images: ["render:a/l"], date: "2026-06-11" },
+        { id: "cccc2222dddd", pages: 1, images: ["render:c/l"], date: "2026-06-11" },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const path = (id: string) => {
+      const x = a.find((y) => y.itemKey === memoKey(id));
+      return x && x.kind === "images" ? x.assets[0].path : null;
+    };
+    expect(path("aaaa1111bbbb")).toBe("BOOX/Calendar memo/20260611 (aaaa1111)/20260611_1.png");
+    expect(path("cccc2222dddd")).toBe("BOOX/Calendar memo/20260611 (cccc2222)/20260611_1.png");
+  });
+
+  it("skips an unchanged memo (hash and image paths match)", () => {
+    const m = manifest({
+      highlights: [],
+      memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: "2026-06-11" }],
+    });
+    const first = planSync(m, emptyState(), settings(), SYNC);
+    const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [memoKey("m1")]: {
+          hash: (memo as any).hash, path: "",
+          assets: (memo as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+  });
+
+  it("re-emits a memo whose content is unchanged but whose date folder moved", () => {
+    // Same strokes, but the memo doc mirrored later and now carries a date —
+    // the images must move from the id folder to the date folder.
+    const undated = manifest({ highlights: [], memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: null }] });
+    const first = planSync(undated, emptyState(), settings(), SYNC);
+    const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [memoKey("m1")]: {
+          hash: (memo as any).hash, path: "",
+          assets: (memo as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    const dated = manifest({ highlights: [], memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: "2026-06-11" }] });
+    const after = planSync(dated, prev, settings(), SYNC);
+    const moved = after.find((x) => x.itemKey === memoKey("m1"));
+    expect(moved && moved.kind === "images" && moved.assets[0].path)
+      .toBe("BOOX/Calendar memo/20260611/20260611_1.png");
   });
 
   it("skips a file unchanged by size", () => {

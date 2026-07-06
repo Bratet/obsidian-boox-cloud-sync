@@ -7,14 +7,22 @@ import type { VaultIO, ObjectFetcher } from "./ports";
 function fakeIO(seed: Record<string, string> = {}) {
   const files = new Map<string, string>(Object.entries(seed));
   const bin = new Map<string, ArrayBuffer>();
+  const removedDirs: string[] = [];
   const io: VaultIO = {
     exists: async (p) => files.has(p) || bin.has(p),
     read: async (p) => files.get(p) ?? "",
     write: async (p, c) => void files.set(p, c),
     writeBinary: async (p, d) => void bin.set(p, d),
     remove: async (p) => void (files.delete(p) || bin.delete(p)),
+    rmdir: async (p) => {
+      // like the real adapter: refuses to remove a non-empty directory
+      for (const k of [...files.keys(), ...bin.keys()]) {
+        if (k.startsWith(`${p}/`)) throw new Error("directory not empty");
+      }
+      removedDirs.push(p);
+    },
   };
-  return { io, files, bin };
+  return { io, files, bin, removedDirs };
 }
 
 const fetcher: ObjectFetcher = { object: async () => new TextEncoder().encode("BYTES").buffer };
@@ -134,6 +142,77 @@ describe("executeSync", () => {
     expect(files.has(oldPath)).toBe(false);
     expect(files.get(newPath)).toBe("# New\n");
     expect(summary.written).toBe(1);
+  });
+
+  it("downloads memo page images and records them in state", async () => {
+    const { io, bin } = fakeIO();
+    const action: SyncAction = {
+      kind: "images", itemKey: "memo:m1", hash: "h", assets: [
+        { ossKey: "render:m1/layA", path: "BOOX/Calendar memo/20260611/20260611_1.png" },
+        { ossKey: "render:m1/layB", path: "BOOX/Calendar memo/20260611/20260611_2.png" },
+      ],
+    };
+    const { state, summary } = await executeSync([action], emptyState(), io, fetcher);
+    expect(bin.has("BOOX/Calendar memo/20260611/20260611_1.png")).toBe(true);
+    expect(bin.has("BOOX/Calendar memo/20260611/20260611_2.png")).toBe(true);
+    expect(summary.downloaded).toBe(2);
+    expect(state.items["memo:m1"].path).toBe("");
+    expect(state.items["memo:m1"].assets).toEqual([
+      "BOOX/Calendar memo/20260611/20260611_1.png",
+      "BOOX/Calendar memo/20260611/20260611_2.png",
+    ]);
+  });
+
+  it("migrates a memo from the old note layout — removes the .md and stale assets", async () => {
+    const oldNote = "BOOX/Memos/m1.md";
+    const oldAsset = "BOOX/_assets/m1/0.png";
+    const { io, files, bin, removedDirs } = fakeIO({ [oldNote]: "note", [oldAsset]: "img" });
+    const prev = emptyState();
+    prev.items["memo:m1"] = { hash: "old", path: oldNote, assets: [oldAsset] };
+    const action: SyncAction = {
+      kind: "images", itemKey: "memo:m1", hash: "new", assets: [
+        { ossKey: "render:m1/layA", path: "BOOX/Calendar memo/20260611/20260611_1.png" },
+      ],
+    };
+    const { state } = await executeSync([action], prev, io, fetcher);
+    expect(files.has(oldNote)).toBe(false);
+    expect(files.has(oldAsset)).toBe(false);
+    expect(bin.has("BOOX/Calendar memo/20260611/20260611_1.png")).toBe(true);
+    expect(state.items["memo:m1"].path).toBe("");
+    // the emptied old folders are cleaned up
+    expect(removedDirs).toContain("BOOX/_assets/m1");
+    expect(removedDirs).toContain("BOOX/Memos");
+  });
+
+  it("images: moving to a new date folder removes the old one", async () => {
+    const oldImg = "BOOX/Calendar memo/m1/m1_1.png";
+    const { io, files, bin, removedDirs } = fakeIO({ [oldImg]: "img" });
+    const prev = emptyState();
+    prev.items["memo:m1"] = { hash: "old", path: "", assets: [oldImg] };
+    const action: SyncAction = {
+      kind: "images", itemKey: "memo:m1", hash: "new", assets: [
+        { ossKey: "render:m1/layA", path: "BOOX/Calendar memo/20260611/20260611_1.png" },
+      ],
+    };
+    await executeSync([action], prev, io, fetcher);
+    expect(files.has(oldImg)).toBe(false);
+    expect(bin.has("BOOX/Calendar memo/20260611/20260611_1.png")).toBe(true);
+    expect(removedDirs).toContain("BOOX/Calendar memo/m1");
+  });
+
+  it("delete removes memo images and their emptied folder", async () => {
+    const img1 = "BOOX/Calendar memo/20260611/20260611_1.png";
+    const img2 = "BOOX/Calendar memo/20260611/20260611_2.png";
+    const { io, files, removedDirs } = fakeIO({ [img1]: "a", [img2]: "b" });
+    const prev = emptyState();
+    prev.items["memo:m1"] = { hash: "h", path: "", assets: [img1, img2] };
+    const action: SyncAction = { kind: "delete", itemKey: "memo:m1", path: "", assets: [img1, img2] };
+    const { state, summary } = await executeSync([action], prev, io, fetcher);
+    expect(files.has(img1)).toBe(false);
+    expect(files.has(img2)).toBe(false);
+    expect(removedDirs).toContain("BOOX/Calendar memo/20260611");
+    expect(state.items["memo:m1"]).toBeUndefined();
+    expect(summary.deleted).toBe(1);
   });
 
   it("rename + user-edited preserves the old file", async () => {

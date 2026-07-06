@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderHighlightBook, renderNotebook, renderMemo } from "./render";
-import type { Highlight, Notebook, Memo } from "./types";
+import { renderHighlightBook, renderNotebook } from "./render";
+import type { Highlight, Notebook } from "./types";
 
 const SYNC = "2026-06-30T00:00:00.000Z";
 
@@ -33,15 +33,5 @@ describe("renderNotebook", () => {
     expect(md).toContain("# Journal");
     expect(md).toContain("**Pages:** 3");
     expect(md).toContain("![[BOOX/_assets/n1/n1.png]]");
-  });
-});
-
-describe("renderMemo", () => {
-  it("embeds assets and a short id heading", () => {
-    const m: Memo = { id: "c1abcdef00", pages: 1, images: [] };
-    const md = renderMemo(m, ["BOOX/_assets/c1abcdef00/p.png"], "h", SYNC);
-    expect(md).toContain("boox-type: memo");
-    expect(md).toContain("# Memo c1abcdef");
-    expect(md).toContain("![[BOOX/_assets/c1abcdef00/p.png]]");
   });
 });

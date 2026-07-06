@@ -38,8 +38,17 @@ export function notebookPath(folder: string, title: string, subdirs: string[] = 
   return `${folder}/Notebooks/${mid}${sanitizeName(title)}.md`;
 }
 
-export function memoPath(folder: string, id: string): string {
-  return `${folder}/Memos/${sanitizeName(id)}.md`;
+// Calendar memos live as bare images, one folder per memo: the folder and the
+// file prefix are the compact calendar day (20260611), so a page is
+// `Calendar memo/20260611/20260611_2.png`. A memo whose CALENDAR_TREE doc
+// hasn't mirrored yet has no date — its id names the folder until it does.
+export function memoFolderName(date: string | null | undefined, id: string): string {
+  const compact = (date ?? "").replace(/-/g, "");
+  return compact || sanitizeName(id);
+}
+
+export function memoImagePath(folder: string, dir: string, base: string, page: number): string {
+  return `${folder}/Calendar memo/${dir}/${base}_${page}.png`;
 }
 
 export function filePath(folder: string, name: string): string {

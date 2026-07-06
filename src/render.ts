@@ -1,4 +1,4 @@
-import type { Highlight, Notebook, Memo } from "./types";
+import type { Highlight, Notebook } from "./types";
 
 function frontmatter(fields: Record<string, string>): string {
   const lines = Object.entries(fields).map(([k, v]) => `${k}: ${v}`);
@@ -45,20 +45,4 @@ export function renderNotebook(
   });
   const embeds = assetVaultPaths.map((p) => `![[${p}]]`).join("\n\n");
   return `${fm}\n# ${nb.title}\n\n**Pages:** ${nb.pages}\n\n${embeds}\n`;
-}
-
-export function renderMemo(
-  m: Memo,
-  assetVaultPaths: string[],
-  hash: string,
-  syncedAt: string,
-): string {
-  const fm = frontmatter({
-    "boox-id": m.id,
-    "boox-type": "memo",
-    "boox-updated": hash,
-    "boox-synced": syncedAt,
-  });
-  const embeds = assetVaultPaths.map((p) => `![[${p}]]`).join("\n\n");
-  return `${fm}\n# Memo ${m.id.slice(0, 8)}\n\n**Pages:** ${m.pages}\n\n${embeds}\n`;
 }

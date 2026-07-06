@@ -30,6 +30,7 @@ export interface Memo {
   id: string;
   pages: number;
   images: string[];
+  date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
 }
 
 export interface FileItem {

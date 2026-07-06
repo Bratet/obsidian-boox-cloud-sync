@@ -108,6 +108,7 @@ export default class BooxSyncPlugin extends Plugin {
         await adapter.writeBinary(p, d);
       },
       remove: (p) => adapter.remove(p),
+      rmdir: (p) => adapter.rmdir(p, false),
     };
   }
 

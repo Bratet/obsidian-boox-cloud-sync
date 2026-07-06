@@ -4,6 +4,9 @@ export interface VaultIO {
   write(path: string, content: string): Promise<void>;
   writeBinary(path: string, data: ArrayBuffer): Promise<void>;
   remove(path: string): Promise<void>;
+  // Remove an (empty) directory. May throw on a non-empty one — callers treat
+  // this as best-effort cleanup. Optional: older adapters don't provide it.
+  rmdir?(path: string): Promise<void>;
 }
 
 export interface ObjectFetcher {
