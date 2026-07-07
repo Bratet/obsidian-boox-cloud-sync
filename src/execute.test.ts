@@ -231,6 +231,50 @@ describe("executeSync", () => {
     expect(state.items["notebook:n1"].assets).toEqual(["BOOX/Notebooks/J/J_1.png"]);
   });
 
+  it("images: a page that 404s (empty/erased on device) is skipped, not an error", async () => {
+    // The manifest can list a page whose strokes were all erased on the device —
+    // the renderer 404s it. One dead page must not poison the whole item.
+    const stale = "BOOX/Calendar memo/20260607/20260607_6.png";
+    const { io, files, bin } = fakeIO({ [stale]: "old ink" });
+    const notFound = Object.assign(new Error("empty page"), { status: 404 });
+    const picky: ObjectFetcher = {
+      object: async (key) => {
+        if (key === "render:m1/dead") throw notFound;
+        return new TextEncoder().encode("BYTES").buffer;
+      },
+    };
+    const action: SyncAction = {
+      kind: "images", itemKey: "memo:m1", hash: "h", assets: [
+        { ossKey: "render:m1/live", path: "BOOX/Calendar memo/20260607/20260607_1.png" },
+        { ossKey: "render:m1/dead", path: stale },
+      ],
+    };
+    const { state, summary } = await executeSync([action], emptyState(), io, picky);
+    expect(bin.has("BOOX/Calendar memo/20260607/20260607_1.png")).toBe(true);
+    expect(files.has(stale)).toBe(false); // outdated ink for the now-empty page is dropped
+    expect(summary.errors).toHaveLength(0);
+    expect(summary.written).toBe(1);
+    // state records the full intended set so the plan stays stable until content changes
+    expect(state.items["memo:m1"].assets).toEqual([
+      "BOOX/Calendar memo/20260607/20260607_1.png",
+      stale,
+    ]);
+  });
+
+  it("images: a non-404 fetch failure still fails the item (it must retry)", async () => {
+    const flaky: ObjectFetcher = {
+      object: async () => { throw Object.assign(new Error("gateway timeout"), { status: 504 }); },
+    };
+    const action: SyncAction = {
+      kind: "images", itemKey: "memo:m1", hash: "h", assets: [
+        { ossKey: "render:m1/a", path: "BOOX/Calendar memo/20260611/20260611_1.png" },
+      ],
+    };
+    const { state, summary } = await executeSync([action], emptyState(), fakeIO().io, flaky);
+    expect(summary.errors).toHaveLength(1);
+    expect(state.items["memo:m1"]).toBeUndefined(); // not marked synced — retried next run
+  });
+
   it("images: moving to a new date folder removes the old one", async () => {
     const oldImg = "BOOX/Calendar memo/m1/m1_1.png";
     const { io, files, bin, removedDirs } = fakeIO({ [oldImg]: "img" });

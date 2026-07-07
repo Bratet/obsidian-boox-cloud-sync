@@ -17,6 +17,8 @@ export interface Notebook {
   title: string;
   updatedAt: number | null;
   folderId?: string | null; // containing device folder; null/absent = root
+  sig?: string | null; // content signature of the item's cloud objects — stroke
+  // edits change it even when the page refs stay identical
 }
 
 // A Notes-app folder from the device tree (NOTE_TREE type-0 doc).
@@ -31,6 +33,7 @@ export interface Memo {
   pages: number;
   images: string[];
   date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
+  sig?: string | null; // content signature — see Notebook.sig
 }
 
 export interface FileItem {

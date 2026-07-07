@@ -40,6 +40,13 @@ describe("hashNotebook / hashMemo", () => {
   it("notebook hash changes when the title changes — files are named by title", () => {
     expect(hashNotebook(nb)).not.toBe(hashNotebook({ ...nb, title: "Renamed" }));
   });
+  it("notebook hash changes with the content signature — stroke edits don't change refs", () => {
+    expect(hashNotebook({ ...nb, sig: "aaaa" })).not.toBe(hashNotebook({ ...nb, sig: "bbbb" }));
+  });
+  it("memo hash changes with the content signature — stroke edits don't change refs", () => {
+    const m: Memo = { id: "m1", pages: 1, images: ["render:m1/a"], date: "2026-06-11", sig: "aaaa" };
+    expect(hashMemo(m)).not.toBe(hashMemo({ ...m, sig: "bbbb" }));
+  });
   it("memo hash changes with page count", () => {
     const m: Memo = { id: "m1", pages: 1, images: [] };
     expect(hashMemo(m)).not.toBe(hashMemo({ ...m, pages: 2 }));

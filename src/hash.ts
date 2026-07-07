@@ -27,8 +27,9 @@ const NOTEBOOK_LAYOUT = "v3";
 
 export function hashNotebook(nb: Notebook): string {
   // Images in device order, NOT sorted — pages are named by position, so a
-  // reorder must re-emit even when the set of refs is unchanged.
-  return hashString(`${NOTEBOOK_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${nb.images.join(",")}`);
+  // reorder must re-emit even when the set of refs is unchanged. The content
+  // sig catches stroke edits on existing pages, which change no ref at all.
+  return hashString(`${NOTEBOOK_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${nb.sig ?? ""}|${nb.images.join(",")}`);
 }
 
 // Memos have their own layout version: v3 moved them from a .md note +
@@ -38,6 +39,7 @@ const MEMO_LAYOUT = "v3";
 
 export function hashMemo(m: Memo): string {
   // Images in device order, NOT sorted — pages are named by position, so a
-  // reorder must re-emit even when the set of refs is unchanged.
-  return hashString(`${MEMO_LAYOUT}|${m.id}|${m.date ?? ""}|${m.pages}|${m.images.join(",")}`);
+  // reorder must re-emit even when the set of refs is unchanged. The content
+  // sig catches stroke edits on existing pages, which change no ref at all.
+  return hashString(`${MEMO_LAYOUT}|${m.id}|${m.date ?? ""}|${m.pages}|${m.sig ?? ""}|${m.images.join(",")}`);
 }

@@ -217,15 +217,30 @@ export async function executeSync(
           keepOldNote = hashString(await io.read(prevItem.path)) !== prevItem.written;
           if (keepOldNote) summary.skippedUserEdited.push(prevItem.path);
         }
+        const emptied = new Set<string>();
         for (const asset of a.assets) {
-          const bytes = await fetcher.object(asset.ossKey);
+          let bytes: ArrayBuffer;
+          try {
+            bytes = await fetcher.object(asset.ossKey);
+          } catch (e: any) {
+            // The manifest can list a page with nothing to render (every stroke
+            // erased on device; stale ref) — the backend 404s it. Skip the page
+            // rather than fail the item; the content sig in the item hash re-syncs
+            // it the moment the page gains ink. Any previously-written image at
+            // this path is outdated ink for a now-empty page — drop it.
+            if (e?.status !== 404) throw e;
+            if (await io.exists(asset.path)) {
+              await io.remove(asset.path);
+              emptied.add(parentFolder(asset.path));
+            }
+            continue;
+          }
           await io.writeBinary(asset.path, bytes);
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
         // item moving folders (rename, collision suffix, old layout).
         const newAssetPaths = new Set(a.assets.map((x) => x.path));
-        const emptied = new Set<string>();
         if (!keepOldNote) {
           for (const oldAssetPath of (prevItem?.assets ?? [])) {
             if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
