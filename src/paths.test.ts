@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   sanitizeName, highlightPath, filePath, parentFolder,
   folderChain, memoFolderName, memoImagePath, notebookDir, notebookImagePath,
+  notebookSingleImagePath,
 } from "./paths";
 
 describe("sanitizeName", () => {
@@ -43,6 +44,11 @@ describe("notebook image layout", () => {
     // a collision-suffixed folder keeps the clean title prefix on files
     expect(notebookImagePath("BOOX", "Notebook-1 (aaaa1111)", "Notebook-1", 2))
       .toBe("BOOX/Notebooks/Notebook-1 (aaaa1111)/Notebook-1_2.png");
+  });
+  it("puts a single-page notebook's one image directly in the chain, no folder", () => {
+    expect(notebookSingleImagePath("BOOX", "Journal")).toBe("BOOX/Notebooks/Journal.png");
+    expect(notebookSingleImagePath("BOOX", "Startup & SaaS/Alif Sessions/Week 2"))
+      .toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Week 2.png");
   });
 });
 

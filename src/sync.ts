@@ -3,7 +3,8 @@ import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook } from "./render";
 import {
   highlightPath, filePath, folderChain, sanitizeName,
-  memoFolderName, memoImagePath, notebookDir, notebookImagePath, parentFolder,
+  memoFolderName, memoImagePath, notebookDir, notebookImagePath,
+  notebookSingleImagePath, parentFolder,
 } from "./paths";
 import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
 import type { VaultIO, ObjectFetcher } from "./ports";
@@ -53,29 +54,35 @@ export function planSync(
   if (settings.syncNotebooks) {
     // Notebooks sync as bare images, like memos: one folder per notebook nested
     // in its device folder chain, pages named <Title>_<n>.png in device order.
-    // Two notebooks with the same title in the same folder would collide on one
-    // directory, so collisions get a short id suffix — deterministically, on
-    // every member of the colliding set.
+    // A single-page notebook skips the folder — its one image sits directly in
+    // the chain as <Title>.png. Two notebooks landing on the same target (same
+    // title, same folder, same shape) get a short id suffix — deterministically,
+    // on every member of the colliding set. A file `T.png` and a folder `T/`
+    // coexist, so single- and multi-page notebooks never collide with each other.
     const naturalDir = (nb: (typeof manifest.notebooks)[number]) =>
       notebookDir(nb.title, folderChain(manifest.folders, nb.folderId));
-    const dirCount = new Map<string, number>();
+    const targetOf = (nb: (typeof manifest.notebooks)[number]) =>
+      nb.images.length === 1 ? `${naturalDir(nb)}.png` : naturalDir(nb);
+    const targetCount = new Map<string, number>();
     for (const nb of manifest.notebooks) {
-      const d = naturalDir(nb);
-      dirCount.set(d, (dirCount.get(d) ?? 0) + 1);
+      const t = targetOf(nb);
+      targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
     }
     for (const nb of manifest.notebooks) {
       const key = notebookKey(nb.id);
       seen.add(key);
       const hash = hashNotebook(nb);
       let dir = naturalDir(nb);
-      if ((dirCount.get(dir) ?? 0) > 1) {
+      if ((targetCount.get(targetOf(nb)) ?? 0) > 1) {
         dir = notebookDir(`${nb.title} (${nb.id.slice(0, 8)})`,
           folderChain(manifest.folders, nb.folderId));
       }
       const base = sanitizeName(nb.title);
-      const assets: AssetDownload[] = nb.images.map((ossKey, i) => ({
-        ossKey, path: notebookImagePath(folder, dir, base, i + 1),
-      }));
+      const assets: AssetDownload[] = nb.images.length === 1
+        ? [{ ossKey: nb.images[0], path: notebookSingleImagePath(folder, dir) }]
+        : nb.images.map((ossKey, i) => ({
+            ossKey, path: notebookImagePath(folder, dir, base, i + 1),
+          }));
       // Content can be unchanged while the target paths move (device folder
       // move, collision suffix) — compare both before skipping.
       const prevItem = prev.items[key];

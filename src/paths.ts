@@ -44,6 +44,12 @@ export function notebookImagePath(folder: string, dir: string, base: string, pag
   return `${folder}/Notebooks/${dir}/${base}_${page}.png`;
 }
 
+// A single-page notebook skips the folder — its one image sits directly in
+// the chain as `Notebooks/<chain>/<Title>.png`.
+export function notebookSingleImagePath(folder: string, dir: string): string {
+  return `${folder}/Notebooks/${dir}.png`;
+}
+
 // Calendar memos live as bare images, one folder per memo: the folder and the
 // file prefix are the compact calendar day (20260611), so a page is
 // `Calendar memo/20260611/20260611_2.png`. A memo whose CALENDAR_TREE doc

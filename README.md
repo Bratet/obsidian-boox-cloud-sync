@@ -2,7 +2,8 @@
 
 One-way background sync of your BOOX/Onyx cloud into your Obsidian vault: book
 highlights as notes, notebooks and calendar memos as bare page images — one
-folder per notebook (`Notebooks/<device folders>/<Title>/<Title>_<page>.png`)
+folder per notebook (`Notebooks/<device folders>/<Title>/<Title>_<page>.png`;
+a single-page notebook skips the folder and sits directly as `<Title>.png`)
 and one per memo day (`Calendar memo/<YYYYMMDD>/<YYYYMMDD>_<page>.png`) — and
 your files as attachments. BOOX is the source of truth — the plugin never
 writes back.

@@ -210,9 +210,67 @@ describe("planSync", () => {
     });
     const a = planSync(m, emptyState(), settings(), SYNC);
     const path = (id: string) => { const x = a.find((y) => y.itemKey === notebookKey(id)); return x && x.kind === "images" ? x.assets[0].path : null; };
-    expect(path("n1")).toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Week 2/Week 2_1.png");
-    expect(path("n2")).toBe("BOOX/Notebooks/Loose/Loose_1.png");
-    expect(path("n3")).toBe("BOOX/Notebooks/Orphan/Orphan_1.png"); // folder doc not synced -> root
+    // all single-page -> the one image sits directly in the chain, no folder
+    expect(path("n1")).toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Week 2.png");
+    expect(path("n2")).toBe("BOOX/Notebooks/Loose.png");
+    expect(path("n3")).toBe("BOOX/Notebooks/Orphan.png"); // folder doc not synced -> root
+  });
+
+  it("single-page notebooks skip the folder; multi-page ones keep it", () => {
+    const m = manifest({
+      highlights: [],
+      notebooks: [
+        { id: "n1", pages: 1, previewKey: null, images: ["render:n1/p"], title: "Solo", updatedAt: 1 },
+        { id: "n2", pages: 2, previewKey: null, images: ["render:n2/pA", "render:n2/pB"], title: "Duo", updatedAt: 1 },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const assets = (id: string) => { const x = a.find((y) => y.itemKey === notebookKey(id)); return x && x.kind === "images" ? x.assets.map((z) => z.path) : null; };
+    expect(assets("n1")).toEqual(["BOOX/Notebooks/Solo.png"]);
+    expect(assets("n2")).toEqual(["BOOX/Notebooks/Duo/Duo_1.png", "BOOX/Notebooks/Duo/Duo_2.png"]);
+  });
+
+  it("a single-page and a multi-page notebook with the same title don't collide", () => {
+    // `J.png` (file) and `J/` (folder) coexist — no suffix needed on either.
+    const m = manifest({
+      highlights: [],
+      notebooks: [
+        { id: "aaaa1111bbbb", pages: 1, previewKey: null, images: ["render:a/p"], title: "J", updatedAt: 1 },
+        { id: "cccc2222dddd", pages: 2, previewKey: null, images: ["render:c/pA", "render:c/pB"], title: "J", updatedAt: 1 },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const assets = (id: string) => { const x = a.find((y) => y.itemKey === notebookKey(id)); return x && x.kind === "images" ? x.assets.map((z) => z.path) : null; };
+    expect(assets("aaaa1111bbbb")).toEqual(["BOOX/Notebooks/J.png"]);
+    expect(assets("cccc2222dddd")).toEqual(["BOOX/Notebooks/J/J_1.png", "BOOX/Notebooks/J/J_2.png"]);
+  });
+
+  it("re-emits a notebook that grows past one page — image moves into a folder", () => {
+    const one = manifest({
+      highlights: [],
+      notebooks: [{ id: "n1", pages: 1, previewKey: null, images: ["render:n1/pA"], title: "J", updatedAt: 1 }],
+    });
+    const first = planSync(one, emptyState(), settings(), SYNC);
+    const nb = first.find((x) => x.itemKey === notebookKey("n1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [notebookKey("n1")]: {
+          hash: (nb as any).hash, path: "",
+          assets: (nb as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    const two = manifest({
+      highlights: [],
+      notebooks: [{ id: "n1", pages: 2, previewKey: null, images: ["render:n1/pA", "render:n1/pB"], title: "J", updatedAt: 2 }],
+    });
+    const after = planSync(two, prev, settings(), SYNC);
+    const grown = after.find((x) => x.itemKey === notebookKey("n1"));
+    expect(grown && grown.kind === "images" && grown.assets.map((x) => x.path)).toEqual([
+      "BOOX/Notebooks/J/J_1.png",
+      "BOOX/Notebooks/J/J_2.png",
+    ]);
   });
 
   it("disambiguates same-folder title collisions with an id suffix", () => {
@@ -227,9 +285,10 @@ describe("planSync", () => {
     });
     const a = planSync(m, emptyState(), settings(), SYNC);
     const path = (id: string) => { const x = a.find((y) => y.itemKey === notebookKey(id)); return x && x.kind === "images" ? x.assets[0].path : null; };
-    expect(path("aaaa1111bbbb")).toBe("BOOX/Notebooks/Starter story/Notebook-1 (aaaa1111)/Notebook-1_1.png");
-    expect(path("cccc2222dddd")).toBe("BOOX/Notebooks/Starter story/Notebook-1 (cccc2222)/Notebook-1_1.png");
-    expect(path("eeee3333ffff")).toBe("BOOX/Notebooks/Notebook-1/Notebook-1_1.png");
+    // single-page colliders: the id suffix lands on the image file itself
+    expect(path("aaaa1111bbbb")).toBe("BOOX/Notebooks/Starter story/Notebook-1 (aaaa1111).png");
+    expect(path("cccc2222dddd")).toBe("BOOX/Notebooks/Starter story/Notebook-1 (cccc2222).png");
+    expect(path("eeee3333ffff")).toBe("BOOX/Notebooks/Notebook-1.png");
   });
 
   it("re-emits a notebook whose content is unchanged but whose folder moved", () => {
@@ -259,7 +318,7 @@ describe("planSync", () => {
       prev, settings(), SYNC);
     const moved = after.find((x) => x.itemKey === notebookKey("n1"));
     expect(moved && moved.kind === "images" && moved.assets[0].path)
-      .toBe("BOOX/Notebooks/New home/T/T_1.png");
+      .toBe("BOOX/Notebooks/New home/T.png");
   });
 
   it("honours per-type toggles", () => {
