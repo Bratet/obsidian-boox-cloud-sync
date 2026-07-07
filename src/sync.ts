@@ -1,9 +1,9 @@
 import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
 import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
-import { renderHighlightBook, renderNotebook } from "./render";
+import { renderHighlightBook } from "./render";
 import {
-  highlightPath, notebookPath, filePath, assetPath, folderChain,
-  memoFolderName, memoImagePath, parentFolder,
+  highlightPath, filePath, folderChain, sanitizeName,
+  memoFolderName, memoImagePath, notebookDir, notebookImagePath, parentFolder,
 } from "./paths";
 import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
 import type { VaultIO, ObjectFetcher } from "./ports";
@@ -51,31 +51,37 @@ export function planSync(
   }
 
   if (settings.syncNotebooks) {
-    // Mirror the device folder tree. Two notebooks with the same title in the
-    // same folder would collide on one .md, so collisions get a short id
-    // suffix — deterministically, on every member of the colliding set.
-    const naturalPath = (nb: (typeof manifest.notebooks)[number]) =>
-      notebookPath(folder, nb.title, folderChain(manifest.folders, nb.folderId));
-    const pathCount = new Map<string, number>();
+    // Notebooks sync as bare images, like memos: one folder per notebook nested
+    // in its device folder chain, pages named <Title>_<n>.png in device order.
+    // Two notebooks with the same title in the same folder would collide on one
+    // directory, so collisions get a short id suffix — deterministically, on
+    // every member of the colliding set.
+    const naturalDir = (nb: (typeof manifest.notebooks)[number]) =>
+      notebookDir(nb.title, folderChain(manifest.folders, nb.folderId));
+    const dirCount = new Map<string, number>();
     for (const nb of manifest.notebooks) {
-      const p = naturalPath(nb);
-      pathCount.set(p, (pathCount.get(p) ?? 0) + 1);
+      const d = naturalDir(nb);
+      dirCount.set(d, (dirCount.get(d) ?? 0) + 1);
     }
     for (const nb of manifest.notebooks) {
       const key = notebookKey(nb.id);
       seen.add(key);
       const hash = hashNotebook(nb);
-      let path = naturalPath(nb);
-      if ((pathCount.get(path) ?? 0) > 1) {
-        path = notebookPath(folder, `${nb.title} (${nb.id.slice(0, 8)})`,
+      let dir = naturalDir(nb);
+      if ((dirCount.get(dir) ?? 0) > 1) {
+        dir = notebookDir(`${nb.title} (${nb.id.slice(0, 8)})`,
           folderChain(manifest.folders, nb.folderId));
       }
-      const assets: AssetDownload[] = nb.images.map((ossKey) => ({ ossKey, path: assetPath(folder, nb.id, ossKey) }));
-      // A pure folder move keeps the hash but changes the path — still re-emit,
-      // so the note lands at its new home and rename cleanup drops the old file.
-      if (prev.items[key]?.hash === hash && prev.items[key]?.path === path) continue;
-      const content = renderNotebook(nb, assets.map((a) => a.path), hash, syncedAt);
-      actions.push({ kind: "note", itemKey: key, path, content, hash, assets });
+      const base = sanitizeName(nb.title);
+      const assets: AssetDownload[] = nb.images.map((ossKey, i) => ({
+        ossKey, path: notebookImagePath(folder, dir, base, i + 1),
+      }));
+      // Content can be unchanged while the target paths move (device folder
+      // move, collision suffix) — compare both before skipping.
+      const prevItem = prev.items[key];
+      if (prevItem?.hash === hash &&
+          (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
+      actions.push({ kind: "images", itemKey: key, hash, assets });
     }
   }
 
@@ -147,10 +153,14 @@ export async function executeSync(
   const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
 
   // Removing the last file from a folder leaves an empty directory in the
-  // vault; sweep those best-effort (rmdir throws on non-empty — that's fine).
+  // vault; sweep those best-effort (rmdir throws on non-empty — that's fine)
+  // and climb while parents keep emptying, so shells like a drained _assets/
+  // vanish too. The climb stops at the sync root: its .boox-sync.json state
+  // file keeps it non-empty.
   const rmdirIfEmpty = async (dir: string) => {
     if (!dir || !io.rmdir) return;
-    try { await io.rmdir(dir); } catch { /* not empty or already gone */ }
+    try { await io.rmdir(dir); } catch { return; /* not empty or already gone */ }
+    await rmdirIfEmpty(parentFolder(dir));
   };
 
   for (const a of actions) {
@@ -192,25 +202,35 @@ export async function executeSync(
         summary.written++;
       } else if (a.kind === "images") {
         const prevItem = prev.items[a.itemKey];
+        // Migration off the note layout: if the user edited the old .md since we
+        // wrote it, keep it — and the assets it embeds — instead of deleting their
+        // work. The new image layout is still written and becomes the managed state.
+        let keepOldNote = false;
+        if (prevItem?.written && prevItem.path && (await io.exists(prevItem.path))) {
+          keepOldNote = hashString(await io.read(prevItem.path)) !== prevItem.written;
+          if (keepOldNote) summary.skippedUserEdited.push(prevItem.path);
+        }
         for (const asset of a.assets) {
           const bytes = await fetcher.object(asset.ossKey);
           await io.writeBinary(asset.path, bytes);
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
-        // memo moving folders (date arrived, collision suffix, old layout).
+        // item moving folders (rename, collision suffix, old layout).
         const newAssetPaths = new Set(a.assets.map((x) => x.path));
         const emptied = new Set<string>();
-        for (const oldAssetPath of (prevItem?.assets ?? [])) {
-          if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
-            await io.remove(oldAssetPath);
-            emptied.add(parentFolder(oldAssetPath));
+        if (!keepOldNote) {
+          for (const oldAssetPath of (prevItem?.assets ?? [])) {
+            if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
+              await io.remove(oldAssetPath);
+              emptied.add(parentFolder(oldAssetPath));
+            }
           }
-        }
-        // Migration from the note layout: the .md this memo used to be.
-        if (prevItem?.path && (await io.exists(prevItem.path))) {
-          await io.remove(prevItem.path);
-          emptied.add(parentFolder(prevItem.path));
+          // Migration from the note layout: the .md this item used to be.
+          if (prevItem?.path && (await io.exists(prevItem.path))) {
+            await io.remove(prevItem.path);
+            emptied.add(parentFolder(prevItem.path));
+          }
         }
         for (const dir of emptied) await rmdirIfEmpty(dir);
         items[a.itemKey] = { hash: a.hash, path: "", assets: a.assets.map((x) => x.path) };

@@ -33,9 +33,15 @@ export function highlightPath(folder: string, bookTitle: string): string {
   return `${folder}/Highlights/${sanitizeName(bookTitle)}.md`;
 }
 
-export function notebookPath(folder: string, title: string, subdirs: string[] = []): string {
+// Notebooks live as bare images, one folder per notebook nested in its device
+// folder chain: a page is `Notebooks/<chain>/<Title>/<Title>_<n>.png`.
+export function notebookDir(title: string, subdirs: string[] = []): string {
   const mid = subdirs.length ? `${subdirs.join("/")}/` : "";
-  return `${folder}/Notebooks/${mid}${sanitizeName(title)}.md`;
+  return `${mid}${sanitizeName(title)}`;
+}
+
+export function notebookImagePath(folder: string, dir: string, base: string, page: number): string {
+  return `${folder}/Notebooks/${dir}/${base}_${page}.png`;
 }
 
 // Calendar memos live as bare images, one folder per memo: the folder and the
@@ -53,15 +59,6 @@ export function memoImagePath(folder: string, dir: string, base: string, page: n
 
 export function filePath(folder: string, name: string): string {
   return `${folder}/Files/${sanitizeName(name)}`;
-}
-
-export function assetPath(folder: string, id: string, ossKey: string): string {
-  const last = ossKey.split("/").pop() || "asset.png";
-  // `render:<id>/<page>` refs (server-rendered handwriting) carry no file
-  // extension; Obsidian only embeds files with a recognized image extension,
-  // so name the asset `<page>.png`. OSS keys already end in their extension.
-  const base = ossKey.startsWith("render:") ? `${sanitizeName(last)}.png` : sanitizeName(last);
-  return `${folder}/_assets/${sanitizeName(id)}/${base}`;
 }
 
 export function parentFolder(path: string): string {

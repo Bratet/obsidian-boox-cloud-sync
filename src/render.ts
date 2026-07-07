@@ -1,4 +1,4 @@
-import type { Highlight, Notebook } from "./types";
+import type { Highlight } from "./types";
 
 function frontmatter(fields: Record<string, string>): string {
   const lines = Object.entries(fields).map(([k, v]) => `${k}: ${v}`);
@@ -29,20 +29,4 @@ export function renderHighlightBook(
     return lines.join("\n");
   });
   return `${fm}\n# ${bookTitle}\n\n${blocks.join("\n\n")}\n`;
-}
-
-export function renderNotebook(
-  nb: Notebook,
-  assetVaultPaths: string[],
-  hash: string,
-  syncedAt: string,
-): string {
-  const fm = frontmatter({
-    "boox-id": nb.id,
-    "boox-type": "notebook",
-    "boox-updated": hash,
-    "boox-synced": syncedAt,
-  });
-  const embeds = assetVaultPaths.map((p) => `![[${p}]]`).join("\n\n");
-  return `${fm}\n# ${nb.title}\n\n**Pages:** ${nb.pages}\n\n${embeds}\n`;
 }

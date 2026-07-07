@@ -19,18 +19,21 @@ export function hashHighlights(items: Highlight[]): string {
   return hashString(norm);
 }
 
-// Bump when the on-disk asset layout changes so already-synced notebooks/memos
-// are seen as changed and get rewritten (new embeds + assets, old ones GC'd).
-// v2: render: asset files now carry a `.png` extension so Obsidian embeds them.
-const ASSET_LAYOUT = "v2";
+// Bump when the on-disk notebook layout changes so already-synced notebooks
+// are seen as changed and get rewritten (new files placed, old ones GC'd).
+// v3: notebooks moved from a .md note + _assets/ images to bare per-notebook
+// image folders (`Notebooks/<chain>/<Title>/<Title>_<n>.png`).
+const NOTEBOOK_LAYOUT = "v3";
 
 export function hashNotebook(nb: Notebook): string {
-  return hashString(`${ASSET_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${[...nb.images].sort().join(",")}`);
+  // Images in device order, NOT sorted — pages are named by position, so a
+  // reorder must re-emit even when the set of refs is unchanged.
+  return hashString(`${NOTEBOOK_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${nb.images.join(",")}`);
 }
 
 // Memos have their own layout version: v3 moved them from a .md note +
 // _assets/ images to bare per-date image folders. Kept separate from
-// ASSET_LAYOUT so bumping it doesn't force a re-download of every notebook.
+// NOTEBOOK_LAYOUT so bumping one doesn't force a re-download of the other.
 const MEMO_LAYOUT = "v3";
 
 export function hashMemo(m: Memo): string {

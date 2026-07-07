@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderHighlightBook, renderNotebook } from "./render";
-import type { Highlight, Notebook } from "./types";
+import { renderHighlightBook } from "./render";
+import type { Highlight } from "./types";
 
 const SYNC = "2026-06-30T00:00:00.000Z";
 
@@ -22,16 +22,5 @@ describe("renderHighlightBook", () => {
   it("is deterministic for fixed inputs", () => {
     expect(renderHighlightBook("My Book", items, "abc123", SYNC))
       .toBe(renderHighlightBook("My Book", items, "abc123", SYNC));
-  });
-});
-
-describe("renderNotebook", () => {
-  const nb: Notebook = { id: "n1", pages: 3, previewKey: "k", images: [], title: "Journal", updatedAt: 1 };
-  it("embeds each asset path and shows the page count", () => {
-    const md = renderNotebook(nb, ["BOOX/_assets/n1/n1.png"], "h", SYNC);
-    expect(md).toContain("boox-type: notebook");
-    expect(md).toContain("# Journal");
-    expect(md).toContain("**Pages:** 3");
-    expect(md).toContain("![[BOOX/_assets/n1/n1.png]]");
   });
 });

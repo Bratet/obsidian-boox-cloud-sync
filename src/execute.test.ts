@@ -184,6 +184,53 @@ describe("executeSync", () => {
     expect(removedDirs).toContain("BOOX/Memos");
   });
 
+  it("migrates a notebook from the old note layout — removes the .md and stale assets", async () => {
+    const oldNote = "BOOX/Notebooks/J.md";
+    const oldAsset = "BOOX/_assets/n1/pA.png";
+    const { io, files, bin, removedDirs } = fakeIO({ [oldNote]: "note we wrote", [oldAsset]: "img" });
+    const prev = emptyState();
+    prev.items["notebook:n1"] = {
+      hash: "old", path: oldNote, written: hashString("note we wrote"), assets: [oldAsset],
+    };
+    const action: SyncAction = {
+      kind: "images", itemKey: "notebook:n1", hash: "new", assets: [
+        { ossKey: "render:n1/pA", path: "BOOX/Notebooks/J/J_1.png" },
+      ],
+    };
+    const { state } = await executeSync([action], prev, io, fetcher);
+    expect(files.has(oldNote)).toBe(false);
+    expect(files.has(oldAsset)).toBe(false);
+    expect(bin.has("BOOX/Notebooks/J/J_1.png")).toBe(true);
+    expect(state.items["notebook:n1"].path).toBe("");
+    expect(removedDirs).toContain("BOOX/_assets/n1");
+    // ...and once the last notebook leaves _assets, the shell folder goes too
+    expect(removedDirs).toContain("BOOX/_assets");
+  });
+
+  it("images: preserves a user-edited note (and its assets) when migrating off the note layout", async () => {
+    const oldNote = "BOOX/Notebooks/J.md";
+    const oldAsset = "BOOX/_assets/n1/pA.png";
+    const { io, files, bin } = fakeIO({ [oldNote]: "user changed this", [oldAsset]: "img" });
+    const prev = emptyState();
+    prev.items["notebook:n1"] = {
+      hash: "old", path: oldNote, written: hashString("original we wrote"), assets: [oldAsset],
+    };
+    const action: SyncAction = {
+      kind: "images", itemKey: "notebook:n1", hash: "new", assets: [
+        { ossKey: "render:n1/pA", path: "BOOX/Notebooks/J/J_1.png" },
+      ],
+    };
+    const { state, summary } = await executeSync([action], prev, io, fetcher);
+    // the edited note keeps working: neither it nor the assets it embeds are touched
+    expect(files.get(oldNote)).toBe("user changed this");
+    expect(files.has(oldAsset)).toBe(true);
+    expect(summary.skippedUserEdited).toContain(oldNote);
+    // the new image layout is still written and becomes the managed state
+    expect(bin.has("BOOX/Notebooks/J/J_1.png")).toBe(true);
+    expect(state.items["notebook:n1"].path).toBe("");
+    expect(state.items["notebook:n1"].assets).toEqual(["BOOX/Notebooks/J/J_1.png"]);
+  });
+
   it("images: moving to a new date folder removes the old one", async () => {
     const oldImg = "BOOX/Calendar memo/m1/m1_1.png";
     const { io, files, bin, removedDirs } = fakeIO({ [oldImg]: "img" });

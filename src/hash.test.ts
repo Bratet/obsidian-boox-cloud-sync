@@ -34,8 +34,11 @@ describe("hashNotebook / hashMemo", () => {
   it("notebook hash changes when an image is added", () => {
     expect(hashNotebook(nb)).not.toBe(hashNotebook({ ...nb, images: ["a", "b", "c"] }));
   });
-  it("notebook hash is image-order independent", () => {
-    expect(hashNotebook(nb)).toBe(hashNotebook({ ...nb, images: ["b", "a"] }));
+  it("notebook hash changes with page ORDER — pages are named by position", () => {
+    expect(hashNotebook(nb)).not.toBe(hashNotebook({ ...nb, images: ["b", "a"] }));
+  });
+  it("notebook hash changes when the title changes — files are named by title", () => {
+    expect(hashNotebook(nb)).not.toBe(hashNotebook({ ...nb, title: "Renamed" }));
   });
   it("memo hash changes with page count", () => {
     const m: Memo = { id: "m1", pages: 1, images: [] };

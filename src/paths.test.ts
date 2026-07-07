@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  sanitizeName, highlightPath, notebookPath, filePath, assetPath, parentFolder,
-  folderChain, memoFolderName, memoImagePath,
+  sanitizeName, highlightPath, filePath, parentFolder,
+  folderChain, memoFolderName, memoImagePath, notebookDir, notebookImagePath,
 } from "./paths";
 
 describe("sanitizeName", () => {
@@ -20,28 +20,29 @@ describe("sanitizeName", () => {
 describe("path builders", () => {
   it("builds typed vault paths under the sync folder", () => {
     expect(highlightPath("BOOX", "The Idea: A Story")).toBe("BOOX/Highlights/The Idea A Story.md");
-    expect(notebookPath("BOOX", "Journal")).toBe("BOOX/Notebooks/Journal.md");
     expect(filePath("BOOX", "paper.pdf")).toBe("BOOX/Files/paper.pdf");
-  });
-  it("derives a stable asset path from the OSS key basename", () => {
-    expect(assetPath("BOOX", "note1", "uid/note/note1/note1.png"))
-      .toBe("BOOX/_assets/note1/note1.png");
-  });
-  it("gives render: refs a .png extension so Obsidian embeds them", () => {
-    // render:<id>/<pageId> -> _assets/<id>/<pageId>.png  (Obsidian only embeds
-    // files with a recognized image extension; the ref itself has none)
-    expect(assetPath("BOOX", "n1", "render:n1/pA")).toBe("BOOX/_assets/n1/pA.png");
-    // memo composite page: render:<id>/0
-    expect(assetPath("BOOX", "m1", "render:m1/0")).toBe("BOOX/_assets/m1/0.png");
   });
   it("returns the parent folder of a path", () => {
     expect(parentFolder("BOOX/Files/paper.pdf")).toBe("BOOX/Files");
     expect(parentFolder("toplevel")).toBe("");
   });
-  it("nests notebooks under their device folder chain", () => {
-    expect(notebookPath("BOOX", "Journal", ["Startup & SaaS", "Alif Sessions"]))
-      .toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Journal.md");
-    expect(notebookPath("BOOX", "Journal", [])).toBe("BOOX/Notebooks/Journal.md");
+});
+
+describe("notebook image layout", () => {
+  it("names the notebook folder by sanitized title, nested in the device chain", () => {
+    expect(notebookDir("Journal", [])).toBe("Journal");
+    expect(notebookDir("Week 2", ["Startup & SaaS", "Alif Sessions"]))
+      .toBe("Startup & SaaS/Alif Sessions/Week 2");
+    expect(notebookDir("A/B: C", [])).toBe("A B C");
+  });
+  it("builds <title>_<page>.png paths inside a per-notebook folder under Notebooks", () => {
+    expect(notebookImagePath("BOOX", "Journal", "Journal", 1))
+      .toBe("BOOX/Notebooks/Journal/Journal_1.png");
+    expect(notebookImagePath("BOOX", "Startup & SaaS/Alif Sessions/Week 2", "Week 2", 3))
+      .toBe("BOOX/Notebooks/Startup & SaaS/Alif Sessions/Week 2/Week 2_3.png");
+    // a collision-suffixed folder keeps the clean title prefix on files
+    expect(notebookImagePath("BOOX", "Notebook-1 (aaaa1111)", "Notebook-1", 2))
+      .toBe("BOOX/Notebooks/Notebook-1 (aaaa1111)/Notebook-1_2.png");
   });
 });
 
