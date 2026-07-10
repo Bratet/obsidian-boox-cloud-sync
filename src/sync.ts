@@ -3,7 +3,7 @@ import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook } from "./render";
 import {
   highlightPath, filePath, folderChain, sanitizeName,
-  memoFolderName, memoImagePath, notebookDir, notebookImagePath,
+  memoFolderName, memoImagePath, memoPdfPath, notebookDir, notebookImagePath,
   notebookPdfPath, notebookSingleImagePath, parentFolder,
 } from "./paths";
 import { bookKey, notebookKey, folderKey, memoKey, fileKey, groupByBook } from "./state";
@@ -111,24 +111,33 @@ export function planSync(
   }
 
   if (settings.syncMemos) {
-    // Calendar memos sync as bare images: one folder per memo named by its
-    // calendar day, pages named <day>_<n>.png in device order. Two memos on
-    // the same day (shouldn't happen, but cloud data is messy) would collide
-    // on a folder — every member of a colliding set gets a short id suffix.
-    const dirCount = new Map<string, number>();
-    for (const m of manifest.memos) {
+    // A memo whose manifest entry carries a `pdf` ref syncs as ONE bound PDF
+    // named by its calendar day, directly in Calendar memo/. Older backends
+    // send no ref — those memos keep the bare-image layout: one folder per
+    // memo, pages named <day>_<n>.png in device order. Two memos on the same
+    // day (shouldn't happen, but cloud data is messy) would collide on a
+    // target — every member of a colliding set gets a short id suffix. A file
+    // `D.pdf` and a folder `D/` coexist, so the shapes never collide.
+    const targetOf = (m: (typeof manifest.memos)[number]) => {
       const d = memoFolderName(m.date, m.id);
-      dirCount.set(d, (dirCount.get(d) ?? 0) + 1);
+      return m.pdf ? `${d}.pdf` : d;
+    };
+    const targetCount = new Map<string, number>();
+    for (const m of manifest.memos) {
+      const t = targetOf(m);
+      targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
     }
     for (const m of manifest.memos) {
       const key = memoKey(m.id);
       seen.add(key);
       const hash = hashMemo(m);
       const base = memoFolderName(m.date, m.id);
-      const dir = (dirCount.get(base) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
-      const assets: AssetDownload[] = m.images.map((ossKey, i) => ({
-        ossKey, path: memoImagePath(folder, dir, base, i + 1),
-      }));
+      const dir = (targetCount.get(targetOf(m)) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
+      const assets: AssetDownload[] = m.pdf
+        ? [{ ossKey: m.pdf, path: memoPdfPath(folder, dir) }]
+        : m.images.map((ossKey, i) => ({
+            ossKey, path: memoImagePath(folder, dir, base, i + 1),
+          }));
       // Content can be unchanged while the target paths move (a colliding memo
       // appeared and forced the suffix) — compare both before skipping.
       const prevItem = prev.items[key];

@@ -189,6 +189,78 @@ describe("planSync", () => {
       .toBe("BOOX/Calendar memo/20260611/20260611_1.png");
   });
 
+  it("memos with a pdf ref sync as one bound PDF named by their day", () => {
+    const m = manifest({
+      highlights: [],
+      memos: [
+        { id: "m1", pages: 2, images: ["render:m1/layA", "render:m1/layB"], date: "2026-06-11", pdf: "pdf:m1" },
+        { id: "m9", pages: 1, images: ["render:m9/l"], date: null, pdf: "pdf:m9" },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const assets = (id: string) => {
+      const x = a.find((y) => y.itemKey === memoKey(id));
+      return x && x.kind === "images" ? x.assets.map((z) => ({ ossKey: z.ossKey, path: z.path })) : null;
+    };
+    // one asset per memo regardless of page count — no per-date folder;
+    // an undated memo (doc not mirrored yet) is named by its id, like the folder was
+    expect(assets("m1")).toEqual([{ ossKey: "pdf:m1", path: "BOOX/Calendar memo/20260611.pdf" }]);
+    expect(assets("m9")).toEqual([{ ossKey: "pdf:m9", path: "BOOX/Calendar memo/m9.pdf" }]);
+  });
+
+  it("same-day memos get id suffixes on their PDFs", () => {
+    const memo = (id: string) => ({ id, pages: 1, images: [`render:${id}/l`], date: "2026-06-11", pdf: `pdf:${id}` });
+    const m = manifest({ highlights: [], memos: [memo("aaaa1111bbbb"), memo("cccc2222dddd")] });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const path = (id: string) => {
+      const x = a.find((y) => y.itemKey === memoKey(id));
+      return x && x.kind === "images" ? x.assets[0].path : null;
+    };
+    expect(path("aaaa1111bbbb")).toBe("BOOX/Calendar memo/20260611 (aaaa1111).pdf");
+    expect(path("cccc2222dddd")).toBe("BOOX/Calendar memo/20260611 (cccc2222).pdf");
+  });
+
+  it("re-emits a memo when the backend starts serving PDFs (paths move)", () => {
+    // Same strokes: the target moves from the image folder to <day>.pdf —
+    // the plan must emit so the PDF lands and the page images get GC'd.
+    const memo = { id: "m1", pages: 2, images: ["render:m1/layA", "render:m1/layB"], date: "2026-06-11" };
+    const before = planSync(manifest({ highlights: [], memos: [memo] }), emptyState(), settings(), SYNC);
+    const prevItem = before.find((x) => x.itemKey === memoKey("m1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [memoKey("m1")]: {
+          hash: (prevItem as any).hash, path: "",
+          assets: (prevItem as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    const after = planSync(
+      manifest({ highlights: [], memos: [{ ...memo, pdf: "pdf:m1" }] }), prev, settings(), SYNC);
+    const moved = after.find((x) => x.itemKey === memoKey("m1"));
+    expect(moved && moved.kind === "images" && moved.assets.map((x) => x.path))
+      .toEqual(["BOOX/Calendar memo/20260611.pdf"]);
+  });
+
+  it("skips an unchanged pdf memo (hash and path match)", () => {
+    const m = manifest({
+      highlights: [],
+      memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: "2026-06-11", pdf: "pdf:m1" }],
+    });
+    const first = planSync(m, emptyState(), settings(), SYNC);
+    const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [memoKey("m1")]: {
+          hash: (memo as any).hash, path: "",
+          assets: (memo as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+  });
+
   it("skips a file unchanged by size", () => {
     const m = manifest({ highlights: [], files: [{ name: "p.pdf", size: 10, fmt: "pdf", key: "uid/msg/p" }] });
     const prev: SyncState = { version: 1, lastSync: null, items: { "file:uid/msg/p": { hash: "10", path: "BOOX/Files/p.pdf", size: 10 } } };

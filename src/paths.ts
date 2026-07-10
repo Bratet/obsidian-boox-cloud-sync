@@ -69,6 +69,12 @@ export function memoImagePath(folder: string, dir: string, base: string, page: n
   return `${folder}/Calendar memo/${dir}/${base}_${page}.png`;
 }
 
+// A memo served as one bound PDF sits directly as `Calendar memo/<day>.pdf` —
+// no per-date folder at all.
+export function memoPdfPath(folder: string, dir: string): string {
+  return `${folder}/Calendar memo/${dir}.pdf`;
+}
+
 export function filePath(folder: string, name: string): string {
   return `${folder}/Files/${sanitizeName(name)}`;
 }

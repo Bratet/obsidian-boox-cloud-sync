@@ -43,5 +43,7 @@ export function hashMemo(m: Memo): string {
   // Images in device order, NOT sorted — pages are named by position, so a
   // reorder must re-emit even when the set of refs is unchanged. The content
   // sig catches stroke edits on existing pages, which change no ref at all.
-  return hashString(`${MEMO_LAYOUT}|${m.id}|${m.date ?? ""}|${m.pages}|${m.sig ?? ""}|${m.images.join(",")}`);
+  // The pdf ref joins the hash only when the backend sends one, so vaults on
+  // the legacy image layout keep their hashes (no pointless re-download).
+  return hashString(`${MEMO_LAYOUT}|${m.id}|${m.date ?? ""}|${m.pages}|${m.sig ?? ""}|${m.pdf ? `${m.pdf}|` : ""}${m.images.join(",")}`);
 }

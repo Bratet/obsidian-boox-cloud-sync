@@ -36,6 +36,8 @@ export interface Memo {
   images: string[];
   date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
   sig?: string | null; // content signature — see Notebook.sig
+  pdf?: string | null; // whole-memo PDF ref (`pdf:<id>`); absent on older
+  // backends — the plugin then falls back to the per-page image layout
 }
 
 export interface FileItem {
