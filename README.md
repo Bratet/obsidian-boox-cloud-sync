@@ -1,12 +1,14 @@
 # BOOX Sync (Obsidian plugin)
 
 One-way background sync of your BOOX/Onyx cloud into your Obsidian vault: book
-highlights as notes, notebooks and calendar memos as bare page images — one
-folder per notebook (`Notebooks/<device folders>/<Title>/<Title>_<page>.png`;
-a single-page notebook skips the folder and sits directly as `<Title>.png`)
-and one per memo day (`Calendar memo/<YYYYMMDD>/<YYYYMMDD>_<page>.png`) — and
-your files as attachments. BOOX is the source of truth — the plugin never
-writes back.
+highlights as notes, each notebook as one bound PDF nested in its device
+folder hierarchy (`Notebooks/<device folders>/<Title>.pdf` — empty device
+folders are mirrored too), calendar memos as bare page images, one folder per
+memo day (`Calendar memo/<YYYYMMDD>/<YYYYMMDD>_<page>.png`), and your files
+as attachments. Against a backend older than the `pdf` manifest field,
+notebooks fall back to per-page images (`<Title>/<Title>_<page>.png`; a
+single-page notebook sits directly as `<Title>.png`). BOOX is the source of
+truth — the plugin never writes back.
 
 ## Build
 

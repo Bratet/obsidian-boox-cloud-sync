@@ -309,6 +309,25 @@ describe("executeSync", () => {
     expect(summary.deleted).toBe(1);
   });
 
+  it("migrating a notebook from page images to one PDF removes the old pages", async () => {
+    const img1 = "BOOX/Notebooks/J/J_1.png";
+    const img2 = "BOOX/Notebooks/J/J_2.png";
+    const { io, files, bin, removedDirs } = fakeIO({ [img1]: "a", [img2]: "b" });
+    const prev = emptyState();
+    prev.items["notebook:n1"] = { hash: "old", path: "", assets: [img1, img2] };
+    const action: SyncAction = {
+      kind: "images", itemKey: "notebook:n1", hash: "new", assets: [
+        { ossKey: "pdf:n1", path: "BOOX/Notebooks/J.pdf" },
+      ],
+    };
+    const { state } = await executeSync([action], prev, io, fetcher);
+    expect(bin.has("BOOX/Notebooks/J.pdf")).toBe(true);
+    expect(files.has(img1)).toBe(false);
+    expect(files.has(img2)).toBe(false);
+    expect(removedDirs).toContain("BOOX/Notebooks/J"); // the emptied page folder
+    expect(state.items["notebook:n1"].assets).toEqual(["BOOX/Notebooks/J.pdf"]);
+  });
+
   it("folder action creates the directory and records it in state", async () => {
     const { io, dirs } = fakeIO();
     const action = { kind: "folder", itemKey: "folder:f1", path: "BOOX/Notebooks/Empty" } as SyncAction;

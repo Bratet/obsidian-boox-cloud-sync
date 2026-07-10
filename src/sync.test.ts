@@ -321,6 +321,81 @@ describe("planSync", () => {
       .toBe("BOOX/Notebooks/New home/T.png");
   });
 
+  it("notebooks with a pdf ref sync as one bound PDF in the folder chain", () => {
+    const m = manifest({
+      highlights: [],
+      folders: [{ id: "f1", title: "Lectures", parentId: null }],
+      notebooks: [
+        { id: "n1", pages: 2, previewKey: null, images: ["render:n1/pA", "render:n1/pB"], title: "Week 2", updatedAt: 1, folderId: "f1", pdf: "pdf:n1" },
+        { id: "n2", pages: 1, previewKey: null, images: ["render:n2/p"], title: "Loose", updatedAt: 1, folderId: null, pdf: "pdf:n2" },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const assets = (id: string) => {
+      const x = a.find((y) => y.itemKey === notebookKey(id));
+      return x && x.kind === "images" ? x.assets.map((z) => ({ ossKey: z.ossKey, path: z.path })) : null;
+    };
+    // one asset per notebook regardless of page count — no per-notebook folder
+    expect(assets("n1")).toEqual([{ ossKey: "pdf:n1", path: "BOOX/Notebooks/Lectures/Week 2.pdf" }]);
+    expect(assets("n2")).toEqual([{ ossKey: "pdf:n2", path: "BOOX/Notebooks/Loose.pdf" }]);
+  });
+
+  it("same-title notebooks in one folder get id suffixes on their PDFs", () => {
+    const nb = (id: string) => ({
+      id, pages: 1, previewKey: null, images: [`render:${id}/p`],
+      title: "Notebook-1", updatedAt: 1, folderId: null, pdf: `pdf:${id}`,
+    });
+    const m = manifest({ highlights: [], notebooks: [nb("aaaa1111bbbb"), nb("cccc2222dddd")] });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const path = (id: string) => {
+      const x = a.find((y) => y.itemKey === notebookKey(id));
+      return x && x.kind === "images" ? x.assets[0].path : null;
+    };
+    expect(path("aaaa1111bbbb")).toBe("BOOX/Notebooks/Notebook-1 (aaaa1111).pdf");
+    expect(path("cccc2222dddd")).toBe("BOOX/Notebooks/Notebook-1 (cccc2222).pdf");
+  });
+
+  it("re-emits a notebook when the backend starts serving PDFs (paths move)", () => {
+    // Same content: the hash may or may not move, but the target paths do —
+    // the plan must emit so the PDF lands and the page images get GC'd.
+    const nb = { id: "n1", pages: 2, previewKey: null, images: ["render:n1/pA", "render:n1/pB"], title: "J", updatedAt: 1 };
+    const before = planSync(manifest({ highlights: [], notebooks: [nb] }), emptyState(), settings(), SYNC);
+    const prevItem = before.find((x) => x.itemKey === notebookKey("n1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [notebookKey("n1")]: {
+          hash: (prevItem as any).hash, path: "",
+          assets: (prevItem as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    const after = planSync(
+      manifest({ highlights: [], notebooks: [{ ...nb, pdf: "pdf:n1" }] }), prev, settings(), SYNC);
+    const moved = after.find((x) => x.itemKey === notebookKey("n1"));
+    expect(moved && moved.kind === "images" && moved.assets.map((x) => x.path))
+      .toEqual(["BOOX/Notebooks/J.pdf"]);
+  });
+
+  it("skips an unchanged pdf notebook (hash and path match)", () => {
+    const m = manifest({
+      highlights: [],
+      notebooks: [{ id: "n1", pages: 1, previewKey: null, images: ["render:n1/p"], title: "J", updatedAt: 1, pdf: "pdf:n1" }],
+    });
+    const first = planSync(m, emptyState(), settings(), SYNC);
+    const nb = first.find((x) => x.itemKey === notebookKey("n1"));
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: {
+        [notebookKey("n1")]: {
+          hash: (nb as any).hash, path: "",
+          assets: (nb as any).assets.map((x: any) => x.path),
+        },
+      },
+    };
+    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+  });
+
   it("emits folder actions so empty device folders exist in the vault", () => {
     const m = manifest({
       highlights: [],

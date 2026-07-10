@@ -29,7 +29,9 @@ export function hashNotebook(nb: Notebook): string {
   // Images in device order, NOT sorted — pages are named by position, so a
   // reorder must re-emit even when the set of refs is unchanged. The content
   // sig catches stroke edits on existing pages, which change no ref at all.
-  return hashString(`${NOTEBOOK_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${nb.sig ?? ""}|${nb.images.join(",")}`);
+  // The pdf ref joins the hash only when the backend sends one, so vaults on
+  // the legacy image layout keep their hashes (no pointless re-download).
+  return hashString(`${NOTEBOOK_LAYOUT}|${nb.title}|${nb.updatedAt}|${nb.pages}|${nb.sig ?? ""}|${nb.pdf ? `${nb.pdf}|` : ""}${nb.images.join(",")}`);
 }
 
 // Memos have their own layout version: v3 moved them from a .md note +

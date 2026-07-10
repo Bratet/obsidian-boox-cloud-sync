@@ -19,6 +19,8 @@ export interface Notebook {
   folderId?: string | null; // containing device folder; null/absent = root
   sig?: string | null; // content signature of the item's cloud objects — stroke
   // edits change it even when the page refs stay identical
+  pdf?: string | null; // whole-notebook PDF ref (`pdf:<id>`); absent on older
+  // backends — the plugin then falls back to the per-page image layout
 }
 
 // A Notes-app folder from the device tree (NOTE_TREE type-0 doc).

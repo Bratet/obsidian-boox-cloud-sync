@@ -50,6 +50,12 @@ export function notebookSingleImagePath(folder: string, dir: string): string {
   return `${folder}/Notebooks/${dir}.png`;
 }
 
+// A notebook served as one bound PDF sits directly in the chain as
+// `Notebooks/<chain>/<Title>.pdf` — no per-notebook folder at all.
+export function notebookPdfPath(folder: string, dir: string): string {
+  return `${folder}/Notebooks/${dir}.pdf`;
+}
+
 // Calendar memos live as bare images, one folder per memo: the folder and the
 // file prefix are the compact calendar day (20260611), so a page is
 // `Calendar memo/20260611/20260611_2.png`. A memo whose CALENDAR_TREE doc
