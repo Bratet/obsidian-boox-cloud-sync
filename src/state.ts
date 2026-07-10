@@ -28,6 +28,7 @@ export function serializeState(state: SyncState): string {
 
 export const bookKey = (bookId: string): string => `highlight-book:${bookId}`;
 export const notebookKey = (id: string): string => `notebook:${id}`;
+export const folderKey = (id: string): string => `folder:${id}`;
 export const memoKey = (id: string): string => `memo:${id}`;
 export const fileKey = (ossKey: string): string => `file:${ossKey}`;
 

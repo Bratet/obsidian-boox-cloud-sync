@@ -7,22 +7,25 @@ import type { VaultIO, ObjectFetcher } from "./ports";
 function fakeIO(seed: Record<string, string> = {}) {
   const files = new Map<string, string>(Object.entries(seed));
   const bin = new Map<string, ArrayBuffer>();
+  const dirs = new Set<string>();
   const removedDirs: string[] = [];
   const io: VaultIO = {
-    exists: async (p) => files.has(p) || bin.has(p),
+    exists: async (p) => files.has(p) || bin.has(p) || dirs.has(p),
     read: async (p) => files.get(p) ?? "",
     write: async (p, c) => void files.set(p, c),
     writeBinary: async (p, d) => void bin.set(p, d),
     remove: async (p) => void (files.delete(p) || bin.delete(p)),
+    mkdir: async (p) => void dirs.add(p),
     rmdir: async (p) => {
       // like the real adapter: refuses to remove a non-empty directory
-      for (const k of [...files.keys(), ...bin.keys()]) {
+      for (const k of [...files.keys(), ...bin.keys(), ...dirs]) {
         if (k.startsWith(`${p}/`)) throw new Error("directory not empty");
       }
+      dirs.delete(p);
       removedDirs.push(p);
     },
   };
-  return { io, files, bin, removedDirs };
+  return { io, files, bin, dirs, removedDirs };
 }
 
 const fetcher: ObjectFetcher = { object: async () => new TextEncoder().encode("BYTES").buffer };
@@ -304,6 +307,48 @@ describe("executeSync", () => {
     expect(removedDirs).toContain("BOOX/Calendar memo/20260611");
     expect(state.items["memo:m1"]).toBeUndefined();
     expect(summary.deleted).toBe(1);
+  });
+
+  it("folder action creates the directory and records it in state", async () => {
+    const { io, dirs } = fakeIO();
+    const action = { kind: "folder", itemKey: "folder:f1", path: "BOOX/Notebooks/Empty" } as SyncAction;
+    const { state, summary } = await executeSync([action], emptyState(), io, fetcher);
+    expect(dirs.has("BOOX/Notebooks/Empty")).toBe(true);
+    expect(state.items["folder:f1"].path).toBe("BOOX/Notebooks/Empty");
+    expect(summary.errors).toHaveLength(0);
+  });
+
+  it("folder rename creates the new directory and drops the emptied old one", async () => {
+    const { io, dirs, removedDirs } = fakeIO();
+    dirs.add("BOOX/Notebooks/Old name"); // left over from a prior sync
+    const prev = emptyState();
+    prev.items["folder:f1"] = { hash: "", path: "BOOX/Notebooks/Old name" };
+    const action = { kind: "folder", itemKey: "folder:f1", path: "BOOX/Notebooks/Renamed" } as SyncAction;
+    const { state } = await executeSync([action], prev, io, fetcher);
+    expect(dirs.has("BOOX/Notebooks/Renamed")).toBe(true);
+    expect(removedDirs).toContain("BOOX/Notebooks/Old name");
+    expect(state.items["folder:f1"].path).toBe("BOOX/Notebooks/Renamed");
+  });
+
+  it("delete of a folder item removes an empty dir but never a non-empty one", async () => {
+    const userFile = "BOOX/Notebooks/Keep/user note.md";
+    const { io, files, dirs, removedDirs } = fakeIO({ [userFile]: "mine" });
+    dirs.add("BOOX/Notebooks/Empty");
+    dirs.add("BOOX/Notebooks/Keep");
+    const prev = emptyState();
+    prev.items["folder:empty"] = { hash: "", path: "BOOX/Notebooks/Empty" };
+    prev.items["folder:keep"] = { hash: "", path: "BOOX/Notebooks/Keep" };
+    const actions: SyncAction[] = [
+      { kind: "delete", itemKey: "folder:empty", path: "BOOX/Notebooks/Empty", assets: [] },
+      { kind: "delete", itemKey: "folder:keep", path: "BOOX/Notebooks/Keep", assets: [] },
+    ];
+    const { state, summary } = await executeSync(actions, prev, io, fetcher);
+    expect(removedDirs).toContain("BOOX/Notebooks/Empty");
+    expect(removedDirs).not.toContain("BOOX/Notebooks/Keep");
+    expect(files.has(userFile)).toBe(true); // user content untouched
+    expect(state.items["folder:empty"]).toBeUndefined();
+    expect(state.items["folder:keep"]).toBeUndefined();
+    expect(summary.errors).toHaveLength(0);
   });
 
   it("rename + user-edited preserves the old file", async () => {

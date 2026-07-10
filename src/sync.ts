@@ -6,7 +6,7 @@ import {
   memoFolderName, memoImagePath, notebookDir, notebookImagePath,
   notebookSingleImagePath, parentFolder,
 } from "./paths";
-import { bookKey, notebookKey, memoKey, fileKey, groupByBook } from "./state";
+import { bookKey, notebookKey, folderKey, memoKey, fileKey, groupByBook } from "./state";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
 export interface AssetDownload {
@@ -17,12 +17,14 @@ export interface AssetDownload {
 export type SyncAction =
   | { kind: "note"; itemKey: string; path: string; content: string; hash: string; assets: AssetDownload[] }
   | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[] } // bare images, no note
+  | { kind: "folder"; itemKey: string; path: string } // a device folder's directory, even when empty
   | { kind: "file"; itemKey: string; ossKey: string; path: string; size: number | null; hash: string }
   | { kind: "delete"; itemKey: string; path: string; assets: string[] };
 
 function managedByEnabledType(key: string, s: BooxSettings): boolean {
   if (key.startsWith("highlight-book:")) return s.syncHighlights;
   if (key.startsWith("notebook:")) return s.syncNotebooks;
+  if (key.startsWith("folder:")) return s.syncNotebooks; // folders are the notebook hierarchy
   if (key.startsWith("memo:")) return s.syncMemos;
   if (key.startsWith("file:")) return s.syncFiles;
   return false;
@@ -89,6 +91,17 @@ export function planSync(
       if (prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
       actions.push({ kind: "images", itemKey: key, hash, assets });
+    }
+    // Device folders are items in their own right: a folder holding no
+    // notebooks would otherwise never materialize (directories are only
+    // created as a side effect of writing files into them). Tracking them
+    // also lets deleteRemoved drop the empty shell when the folder goes.
+    for (const f of manifest.folders ?? []) {
+      const key = folderKey(f.id);
+      seen.add(key);
+      const path = `${folder}/Notebooks/${folderChain(manifest.folders, f.id).join("/")}`;
+      if (prev.items[key]?.path === path) continue;
+      actions.push({ kind: "folder", itemKey: key, path });
     }
   }
 
@@ -257,14 +270,26 @@ export async function executeSync(
         for (const dir of emptied) await rmdirIfEmpty(dir);
         items[a.itemKey] = { hash: a.hash, path: "", assets: a.assets.map((x) => x.path) };
         summary.written++;
+      } else if (a.kind === "folder") {
+        if (io.mkdir && !(await io.exists(a.path))) await io.mkdir(a.path);
+        // A rename/move leaves the old directory behind; the notebooks inside
+        // move via their own actions — drop the shell once nothing lives there.
+        const prevPath = prev.items[a.itemKey]?.path;
+        if (prevPath && prevPath !== a.path) await rmdirIfEmpty(prevPath);
+        items[a.itemKey] = { hash: "", path: a.path };
       } else if (a.kind === "file") {
         const bytes = await fetcher.object(a.ossKey);
         await io.writeBinary(a.path, bytes);
         items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size };
         summary.downloaded++;
       } else {
-        // delete
-        if (a.path && (await io.exists(a.path))) await io.remove(a.path);
+        // delete — a folder item's path is a directory that may hold the
+        // user's own files: only an empty shell is removed.
+        if (a.itemKey.startsWith("folder:")) {
+          await rmdirIfEmpty(a.path);
+        } else if (a.path && (await io.exists(a.path))) {
+          await io.remove(a.path);
+        }
         const emptied = new Set<string>();
         for (const assetPath of (a.assets ?? [])) {
           if (await io.exists(assetPath)) await io.remove(assetPath);

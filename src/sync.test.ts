@@ -321,6 +321,63 @@ describe("planSync", () => {
       .toBe("BOOX/Notebooks/New home/T.png");
   });
 
+  it("emits folder actions so empty device folders exist in the vault", () => {
+    const m = manifest({
+      highlights: [],
+      folders: [
+        { id: "fA", title: "Empty", parentId: null },
+        { id: "fB", title: "Child", parentId: "fA" },
+      ],
+    });
+    const a = planSync(m, emptyState(), settings(), SYNC);
+    const path = (id: string) => {
+      const x = a.find((y) => y.itemKey === `folder:${id}`);
+      return x && x.kind === "folder" ? x.path : null;
+    };
+    expect(path("fA")).toBe("BOOX/Notebooks/Empty");
+    expect(path("fB")).toBe("BOOX/Notebooks/Empty/Child");
+  });
+
+  it("skips an unchanged folder (prev path matches)", () => {
+    const m = manifest({ highlights: [], folders: [{ id: "fA", title: "Empty", parentId: null }] });
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: { "folder:fA": { hash: "", path: "BOOX/Notebooks/Empty" } },
+    };
+    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+  });
+
+  it("re-emits a folder whose title changed on the device", () => {
+    const m = manifest({ highlights: [], folders: [{ id: "fA", title: "Renamed", parentId: null }] });
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: { "folder:fA": { hash: "", path: "BOOX/Notebooks/Old name" } },
+    };
+    const a = planSync(m, prev, settings(), SYNC);
+    expect(a).toHaveLength(1);
+    expect(a[0].kind).toBe("folder");
+    expect(a[0].kind === "folder" && a[0].path).toBe("BOOX/Notebooks/Renamed");
+  });
+
+  it("folder actions follow the notebooks toggle", () => {
+    const m = manifest({ highlights: [], folders: [{ id: "fA", title: "Empty", parentId: null }] });
+    expect(planSync(m, emptyState(), settings({ syncNotebooks: false }), SYNC)).toHaveLength(0);
+  });
+
+  it("a device-deleted folder gets a delete action when deleteRemoved is on", () => {
+    const prev: SyncState = {
+      version: 1, lastSync: null,
+      items: { "folder:gone": { hash: "", path: "BOOX/Notebooks/Gone" } },
+    };
+    const m = manifest({ highlights: [] });
+    const del = planSync(m, prev, settings({ deleteRemoved: true }), SYNC);
+    expect(del).toHaveLength(1);
+    expect(del[0].kind).toBe("delete");
+    expect(del[0].itemKey).toBe("folder:gone");
+    // notebooks toggle off -> folder items are unmanaged, nothing is deleted
+    expect(planSync(m, prev, settings({ deleteRemoved: true, syncNotebooks: false }), SYNC)).toHaveLength(0);
+  });
+
   it("honours per-type toggles", () => {
     expect(planSync(manifest(), emptyState(), settings({ syncHighlights: false }), SYNC)).toHaveLength(0);
   });

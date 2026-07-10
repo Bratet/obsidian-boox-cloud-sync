@@ -86,16 +86,16 @@ export default class BooxSyncPlugin extends Plugin {
 
   private io(): VaultIO {
     const adapter = this.app.vault.adapter;
-    const ensureParent = async (path: string) => {
-      const parts = path.split("/");
-      parts.pop(); // remove the file name — only create ancestors
+    // Create a directory and any missing ancestors (adapter.mkdir is single-level).
+    const ensureDir = async (dir: string) => {
       let accumulated = "";
-      for (const part of parts) {
+      for (const part of dir.split("/")) {
         if (!part) continue;
         accumulated = accumulated ? `${accumulated}/${part}` : part;
         if (!(await adapter.exists(accumulated))) await adapter.mkdir(accumulated);
       }
     };
+    const ensureParent = (path: string) => ensureDir(path.split("/").slice(0, -1).join("/"));
     return {
       exists: (p) => adapter.exists(p),
       read: (p) => adapter.read(p),
@@ -108,6 +108,7 @@ export default class BooxSyncPlugin extends Plugin {
         await adapter.writeBinary(p, d);
       },
       remove: (p) => adapter.remove(p),
+      mkdir: ensureDir,
       rmdir: (p) => adapter.rmdir(p, false),
     };
   }
