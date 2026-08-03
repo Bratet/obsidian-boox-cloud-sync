@@ -3,6 +3,14 @@ import type { BooxFolder } from "./types";
 // Characters Obsidian / the OS reject in note titles or that have wiki-link meaning.
 const ILLEGAL = /[\\/:*?"<>|#^[\]]/g;
 
+// Vaults live on case-insensitive (and Unicode-normalization-insensitive)
+// filesystems by default — APFS, NTFS. Two paths that fold equal are the SAME
+// file there. Every path comparison in the sync must go through this; writes
+// never do (the vault keeps the display case).
+export function foldPath(p: string): string {
+  return p.normalize("NFC").toLowerCase();
+}
+
 export function sanitizeName(name: string): string {
   const cleaned = (name || "").replace(ILLEGAL, " ").replace(/\s+/g, " ").trim();
   return cleaned || "Untitled";

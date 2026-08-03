@@ -64,6 +64,8 @@ export interface SyncItem {
   path: string; // vault-relative path written
   written?: string; // hash of the exact note bytes we wrote — detects user edits
   assets?: string[]; // local asset paths written for this item
+  missing?: string[]; // asset paths intentionally absent on disk (device-erased
+  // pages the renderer 404s) — healMissingFiles must not re-arm the item for them
   size?: number | null; // for files — change detection by size
 }
 

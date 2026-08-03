@@ -2,7 +2,7 @@ import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
 import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook } from "./render";
 import {
-  highlightPath, filePath, folderChain, sanitizeName,
+  foldPath, highlightPath, filePath, folderChain, sanitizeName,
   memoFolderName, memoImagePath, memoPdfPath, notebookDir, notebookImagePath,
   notebookPdfPath, notebookSingleImagePath, parentFolder,
 } from "./paths";
@@ -61,7 +61,9 @@ export function planSync(
     // notebooks sitting directly in the chain as <Title>.png. Two notebooks
     // landing on the same target (same title, same folder, same shape) get a
     // short id suffix — deterministically, on every member of the colliding
-    // set. A file `T.png`/`T.pdf` and a folder `T/` coexist, so the shapes
+    // set. Targets are compared case-folded: the vault filesystem is
+    // case-insensitive, so `Ideas.pdf` and `ideas.pdf` are one file there.
+    // A file `T.png`/`T.pdf` and a folder `T/` coexist, so the shapes
     // never collide with each other.
     const naturalDir = (nb: (typeof manifest.notebooks)[number]) =>
       notebookDir(nb.title, folderChain(manifest.folders, nb.folderId));
@@ -70,7 +72,7 @@ export function planSync(
         : nb.images.length === 1 ? `${naturalDir(nb)}.png` : naturalDir(nb);
     const targetCount = new Map<string, number>();
     for (const nb of manifest.notebooks) {
-      const t = targetOf(nb);
+      const t = foldPath(targetOf(nb));
       targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
     }
     for (const nb of manifest.notebooks) {
@@ -78,7 +80,7 @@ export function planSync(
       seen.add(key);
       const hash = hashNotebook(nb);
       let dir = naturalDir(nb);
-      if ((targetCount.get(targetOf(nb)) ?? 0) > 1) {
+      if ((targetCount.get(foldPath(targetOf(nb))) ?? 0) > 1) {
         dir = notebookDir(`${nb.title} (${nb.id.slice(0, 8)})`,
           folderChain(manifest.folders, nb.folderId));
       }
@@ -124,7 +126,7 @@ export function planSync(
     };
     const targetCount = new Map<string, number>();
     for (const m of manifest.memos) {
-      const t = targetOf(m);
+      const t = foldPath(targetOf(m));
       targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
     }
     for (const m of manifest.memos) {
@@ -132,7 +134,7 @@ export function planSync(
       seen.add(key);
       const hash = hashMemo(m);
       const base = memoFolderName(m.date, m.id);
-      const dir = (targetCount.get(targetOf(m)) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
+      const dir = (targetCount.get(foldPath(targetOf(m))) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
       const assets: AssetDownload[] = m.pdf
         ? [{ ossKey: m.pdf, path: memoPdfPath(folder, dir) }]
         : m.images.map((ossKey, i) => ({
@@ -159,10 +161,30 @@ export function planSync(
   }
 
   if (settings.deleteRemoved) {
+    // Paths the surviving items own, case-folded. A dead item can name the
+    // same physical file as a live one on the case-insensitive vault (the
+    // device replaced `visa documents` with `Visa documents`) — its delete
+    // must not carry that path, or it removes the file the live item's write
+    // just produced. Surviving paths come from this run's actions when the
+    // item re-emitted, else from its unchanged prev entry.
+    const livePaths = new Set<string>();
+    for (const a of actions) {
+      if (a.kind === "note" || a.kind === "folder" || a.kind === "file") livePaths.add(foldPath(a.path));
+      if (a.kind === "note" || a.kind === "images") for (const x of a.assets) livePaths.add(foldPath(x.path));
+    }
+    for (const key of seen) {
+      const p = prev.items[key];
+      if (!p) continue;
+      if (p.path) livePaths.add(foldPath(p.path));
+      for (const x of p.assets ?? []) livePaths.add(foldPath(x));
+    }
     for (const key of Object.keys(prev.items)) {
       if (seen.has(key)) continue;
       if (!managedByEnabledType(key, settings)) continue;
-      actions.push({ kind: "delete", itemKey: key, path: prev.items[key].path, assets: prev.items[key].assets ?? [] });
+      const it = prev.items[key];
+      const path = it.path && !livePaths.has(foldPath(it.path)) ? it.path : "";
+      const assets = (it.assets ?? []).filter((x) => !livePaths.has(foldPath(x)));
+      actions.push({ kind: "delete", itemKey: key, path, assets });
     }
   }
 
@@ -185,6 +207,17 @@ export async function executeSync(
 ): Promise<{ state: SyncState; summary: SyncSummary }> {
   const items: Record<string, SyncItem> = { ...prev.items };
   const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
+
+  // Every path the previous state tracked, keyed by case-fold — regardless of
+  // which item owned it. A write landing on a case-variant of any old file
+  // (device replaced `visa documents` with `Visa documents`: different item,
+  // same physical file on the case-insensitive vault) must clear the old
+  // directory entry first, or the file keeps the stale name-case forever.
+  const prevPathByFold = new Map<string, string>();
+  for (const it of Object.values(prev.items)) {
+    if (it.path) prevPathByFold.set(foldPath(it.path), it.path);
+    for (const p of it.assets ?? []) prevPathByFold.set(foldPath(p), p);
+  }
 
   // Removing the last file from a folder leaves an empty directory in the
   // vault; sweep those best-effort (rmdir throws on non-empty — that's fine)
@@ -215,16 +248,27 @@ export async function executeSync(
           await io.writeBinary(asset.path, bytes);
           summary.downloaded++;
         }
+        // A case-only rename targets the SAME file on the case-insensitive
+        // vault: clear the old directory entry first so the write creates the
+        // new-case name instead of updating the old one — and never remove it
+        // afterwards (that would delete the note just written).
+        const caseOnlyRename = !!prevItem && prevItem.path !== a.path &&
+          foldPath(prevItem.path) === foldPath(a.path);
+        if (prevItem && caseOnlyRename && (await io.exists(prevItem.path))) {
+          await io.remove(prevItem.path);
+        }
         await io.write(a.path, a.content);
-        // GC stale assets: remove any previously-written asset not in the new set
-        const newAssetPaths = new Set(a.assets.map((x) => x.path));
+        // GC stale assets: remove any previously-written asset not in the new
+        // set — compared case-folded, so a case-variant of a freshly written
+        // asset is recognized as that same file and kept.
+        const newAssetPaths = new Set(a.assets.map((x) => foldPath(x.path)));
         for (const oldAssetPath of (prevItem?.assets ?? [])) {
-          if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
+          if (!newAssetPaths.has(foldPath(oldAssetPath)) && (await io.exists(oldAssetPath))) {
             await io.remove(oldAssetPath);
           }
         }
         // Rename cleanup: if the title changed, remove the now-orphaned old-path note
-        if (prevItem && prevItem.path !== a.path && (await io.exists(prevItem.path))) {
+        if (prevItem && prevItem.path !== a.path && !caseOnlyRename && (await io.exists(prevItem.path))) {
           await io.remove(prevItem.path);
         }
         items[a.itemKey] = {
@@ -245,6 +289,7 @@ export async function executeSync(
           if (keepOldNote) summary.skippedUserEdited.push(prevItem.path);
         }
         const emptied = new Set<string>();
+        const missing: string[] = [];
         for (const asset of a.assets) {
           let bytes: ArrayBuffer;
           try {
@@ -254,35 +299,49 @@ export async function executeSync(
             // erased on device; stale ref) — the backend 404s it. Skip the page
             // rather than fail the item; the content sig in the item hash re-syncs
             // it the moment the page gains ink. Any previously-written image at
-            // this path is outdated ink for a now-empty page — drop it.
+            // this path is outdated ink for a now-empty page — drop it. Record
+            // the gap so healMissingFiles knows it is intentional.
             if (e?.status !== 404) throw e;
+            missing.push(asset.path);
             if (await io.exists(asset.path)) {
               await io.remove(asset.path);
               emptied.add(parentFolder(asset.path));
             }
             continue;
           }
+          // Case-variant of a previously tracked file (any item): clear the
+          // old directory entry just before writing so the file takes the
+          // new-case name instead of silently keeping the old one.
+          const oldCase = prevPathByFold.get(foldPath(asset.path));
+          if (!keepOldNote && oldCase !== undefined && oldCase !== asset.path && (await io.exists(oldCase))) {
+            await io.remove(oldCase);
+          }
           await io.writeBinary(asset.path, bytes);
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
-        // item moving folders (rename, collision suffix, old layout).
-        const newAssetPaths = new Set(a.assets.map((x) => x.path));
+        // item moving folders (rename, collision suffix, old layout). Compared
+        // case-folded so a case-variant of a freshly written asset is
+        // recognized as that same file and kept.
+        const newAssetPaths = new Set(a.assets.map((x) => foldPath(x.path)));
         if (!keepOldNote) {
           for (const oldAssetPath of (prevItem?.assets ?? [])) {
-            if (!newAssetPaths.has(oldAssetPath) && (await io.exists(oldAssetPath))) {
+            if (!newAssetPaths.has(foldPath(oldAssetPath)) && (await io.exists(oldAssetPath))) {
               await io.remove(oldAssetPath);
               emptied.add(parentFolder(oldAssetPath));
             }
           }
           // Migration from the note layout: the .md this item used to be.
-          if (prevItem?.path && (await io.exists(prevItem.path))) {
+          if (prevItem?.path && !newAssetPaths.has(foldPath(prevItem.path)) && (await io.exists(prevItem.path))) {
             await io.remove(prevItem.path);
             emptied.add(parentFolder(prevItem.path));
           }
         }
         for (const dir of emptied) await rmdirIfEmpty(dir);
-        items[a.itemKey] = { hash: a.hash, path: "", assets: a.assets.map((x) => x.path) };
+        items[a.itemKey] = {
+          hash: a.hash, path: "", assets: a.assets.map((x) => x.path),
+          ...(missing.length ? { missing } : {}),
+        };
         summary.written++;
       } else if (a.kind === "folder") {
         if (io.mkdir && !(await io.exists(a.path))) await io.mkdir(a.path);
@@ -319,4 +378,30 @@ export async function executeSync(
   }
 
   return { state: { version: prev.version, lastSync: prev.lastSync, items }, summary };
+}
+
+// A tracked file can vanish from the vault outside the plugin's control — the
+// historic case-collision delete, a user pruning files, another tool. One-way
+// sync means the cloud wins: re-arm any item whose files are gone so planSync
+// re-emits it. Pages recorded as `missing` (device-erased, renderer 404) are
+// intentional gaps, not losses. Folder and file items re-emit on a path
+// mismatch rather than a hash mismatch, so they heal by clearing the path.
+export async function healMissingFiles(prev: SyncState, io: VaultIO): Promise<SyncState> {
+  const items: Record<string, SyncItem> = { ...prev.items };
+  for (const [key, it] of Object.entries(prev.items)) {
+    const intentional = new Set(it.missing ?? []);
+    const expected = [
+      ...(it.path ? [it.path] : []),
+      ...(it.assets ?? []).filter((p) => !intentional.has(p)),
+    ];
+    let lost = false;
+    for (const p of expected) {
+      if (!(await io.exists(p))) { lost = true; break; }
+    }
+    if (!lost) continue;
+    items[key] = key.startsWith("folder:") || key.startsWith("file:")
+      ? { ...it, hash: "", path: "" }
+      : { ...it, hash: "" };
+  }
+  return { version: prev.version, lastSync: prev.lastSync, items };
 }

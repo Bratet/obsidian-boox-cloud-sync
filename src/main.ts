@@ -3,7 +3,7 @@ import type { BooxSettings } from "./types";
 import { BooxClient, type HttpTransport } from "./client";
 import { DEFAULT_SETTINGS, BooxSettingTab } from "./settings";
 import type { VaultIO } from "./ports";
-import { planSync, executeSync } from "./sync";
+import { planSync, executeSync, healMissingFiles } from "./sync";
 import { parseState, serializeState, emptyState, STATE_FILENAME } from "./state";
 
 export default class BooxSyncPlugin extends Plugin {
@@ -125,7 +125,10 @@ export default class BooxSyncPlugin extends Plugin {
       const manifest = await client.sources();
       const io = this.io();
       const statePath = `${this.settings.syncFolder}/${STATE_FILENAME}`;
-      const prev = (await io.exists(statePath)) ? parseState(await io.read(statePath)) : emptyState();
+      const loaded = (await io.exists(statePath)) ? parseState(await io.read(statePath)) : emptyState();
+      // Re-arm items whose vault files vanished since we wrote them — the
+      // cloud is the source of truth, so they re-download this run.
+      const prev = await healMissingFiles(loaded, io);
       const syncedAt = new Date().toISOString();
       const actions = planSync(manifest, prev, this.settings, syncedAt);
       const { state, summary } = await executeSync(actions, prev, io, client);
