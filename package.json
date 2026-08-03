@@ -9,6 +9,11 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bratet/obsidian-boox-cloud-sync.git"
+  },
+  "author": "Ahmed Mrabet",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20",
