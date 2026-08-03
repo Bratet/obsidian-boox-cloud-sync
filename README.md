@@ -21,7 +21,7 @@ npm test           # runs the pure-core unit tests
 
 ## Install into a vault (manual)
 
-Copy three files into `<your-vault>/.obsidian/plugins/boox-sync/`:
+Copy three files into `<your-vault>/.obsidian/plugins/boox-cloud-sync/`:
 
 - `manifest.json`
 - `main.js` (from the build)
@@ -46,7 +46,7 @@ Then in Obsidian: **Settings → Community plugins → enable "BOOX Sync"**.
 
 ## Notes
 
-- The API key lives in `.obsidian/plugins/boox-sync/data.json`. If you sync your
+- The API key lives in `.obsidian/plugins/boox-cloud-sync/data.json`. If you sync your
   vault (iCloud / Obsidian Sync / git), the key travels with it — it is revocable
   via **Disconnect**. Consider git-ignoring `.obsidian/plugins/*/data.json`.
 - The plugin only manages files it wrote (tracked in `<sync-folder>/.boox-sync.json`).

@@ -73,7 +73,7 @@ export interface SyncState {
   items: Record<string, SyncItem>;
 }
 
-// Plugin settings, persisted in .obsidian/plugins/boox-sync/data.json
+// Plugin settings, persisted in .obsidian/plugins/boox-cloud-sync/data.json
 export interface BooxSettings {
   backendUrl: string;
   apiKey: string;
