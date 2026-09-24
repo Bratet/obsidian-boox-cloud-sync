@@ -1,6 +1,7 @@
 export interface VaultIO {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<string>;
+  readBinary?(path: string): Promise<ArrayBuffer>;
   write(path: string, content: string): Promise<void>;
   writeBinary(path: string, data: ArrayBuffer): Promise<void>;
   remove(path: string): Promise<void>;

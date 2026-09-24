@@ -1,12 +1,9 @@
 import type { Manifest, SyncState, BooxSettings, SyncItem } from "./types";
 import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook } from "./render";
-import {
-  highlightPath, filePath, folderChain, sanitizeName,
-  memoFolderName, memoImagePath, memoPdfPath, notebookDir, notebookImagePath,
-  notebookPdfPath, notebookSingleImagePath, parentFolder,
-} from "./paths";
+import { folderChain, sanitizeName, safeFolder, nameFromTemplate, formatDate, notebookDir, parentFolder } from "./paths";
 import { bookKey, notebookKey, folderKey, memoKey, fileKey, groupByBook } from "./state";
+import { EmptyPageError } from "./handwriting";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
 export interface AssetDownload {
@@ -38,17 +35,46 @@ export function planSync(
 ): SyncAction[] {
   const actions: SyncAction[] = [];
   const seen = new Set<string>();
-  const folder = settings.syncFolder;
+  const folder = safeFolder(settings.syncFolder);
+  if (!folder) throw new Error("Choose a non-empty sync folder.");
+  const category = (name: string, fallback: string) => `${folder}/${safeFolder(name || fallback)}`;
+  const roots = {
+    highlights: category(settings.highlightsFolder || "", "Highlights"),
+    notebooks: category(settings.notebooksFolder || "", "Notebooks"),
+    memos: category(settings.memosFolder || "", "Calendar memo"),
+    files: category(settings.filesFolder || "", "Files"),
+  };
+  const nbName = (nb: Manifest["notebooks"][number]) => nameFromTemplate(settings.notebookName || "{title}", {
+    title: nb.title, id: nb.id, date: formatDate(nb.updatedAt ? new Date(nb.updatedAt).toISOString().slice(0, 10) : null, settings.dateFormat),
+  });
+  const memoName = (m: Manifest["memos"][number]) => nameFromTemplate(settings.memoName || "{date}", {
+    date: formatDate(m.date, settings.dateFormat) || m.id, id: m.id, title: "Memo",
+  });
+  const pageName = (title: string, id: string, page: number) => nameFromTemplate(settings.pageName || "{title}_{page}", { title, id, page });
+  const folders = settings.preserveFolders === false ? [] : manifest.folders;
+  const usePdf = (item: { pdf?: string | null }) => settings.exportFormat !== "png" && item.pdf;
+  const shortId = (id: string, ids: string[]) => {
+    let length = 8;
+    while (length < id.length && ids.some(other => other !== id && other.slice(0, length) === id.slice(0, length))) length += 4;
+    return sanitizeName(id.slice(0, length));
+  };
+  const collisionNames = (pairs: [string, string][]) => {
+    const counts = new Map<string, number>();
+    for (const [, name] of pairs) counts.set(name.toLowerCase(), (counts.get(name.toLowerCase()) || 0) + 1);
+    return new Map(pairs.map(([id, name]) => [id, counts.get(name.toLowerCase())! > 1 ? `${name} (${hashString(id)})` : name]));
+  };
+  const bookNames = collisionNames([...groupByBook(manifest.highlights)].map(([id, items]) => [id,
+    nameFromTemplate(settings.highlightName || "{title}", { title: items[0]?.book || "Book", id })]));
 
   if (settings.syncHighlights) {
     for (const [bookId, items] of groupByBook(manifest.highlights)) {
       const key = bookKey(bookId);
       seen.add(key);
       const title = items[0]?.book || "Book";
-      const hash = hashHighlights(items);
-      const path = highlightPath(folder, title);
-      if (prev.items[key]?.hash === hash) continue;
-      const content = renderHighlightBook(title, items, hash, syncedAt);
+      const hash = hashString(hashHighlights(items) + (settings.highlightTemplate || ""));
+      const path = `${roots.highlights}/${bookNames.get(bookId)}.md`;
+      if (prev.items[key]?.hash === hash && prev.items[key]?.path === path) continue;
+      const content = renderHighlightBook(title, items, hash, syncedAt, settings.highlightTemplate);
       actions.push({ kind: "note", itemKey: key, path, content, hash, assets: [] });
     }
   }
@@ -64,31 +90,31 @@ export function planSync(
     // set. A file `T.png`/`T.pdf` and a folder `T/` coexist, so the shapes
     // never collide with each other.
     const naturalDir = (nb: (typeof manifest.notebooks)[number]) =>
-      notebookDir(nb.title, folderChain(manifest.folders, nb.folderId));
+      notebookDir(nbName(nb), folderChain(folders, nb.folderId));
     const targetOf = (nb: (typeof manifest.notebooks)[number]) =>
-      nb.pdf ? `${naturalDir(nb)}.pdf`
+      usePdf(nb) ? `${naturalDir(nb)}.pdf`
         : nb.images.length === 1 ? `${naturalDir(nb)}.png` : naturalDir(nb);
     const targetCount = new Map<string, number>();
     for (const nb of manifest.notebooks) {
       const t = targetOf(nb);
-      targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
+      targetCount.set(t.toLowerCase(), (targetCount.get(t.toLowerCase()) ?? 0) + 1);
     }
     for (const nb of manifest.notebooks) {
       const key = notebookKey(nb.id);
       seen.add(key);
       const hash = hashNotebook(nb);
       let dir = naturalDir(nb);
-      if ((targetCount.get(targetOf(nb)) ?? 0) > 1) {
-        dir = notebookDir(`${nb.title} (${nb.id.slice(0, 8)})`,
-          folderChain(manifest.folders, nb.folderId));
+      if ((targetCount.get(targetOf(nb).toLowerCase()) ?? 0) > 1) {
+        dir = notebookDir(`${nbName(nb)} (${shortId(nb.id, manifest.notebooks.map(n => n.id))})`,
+          folderChain(folders, nb.folderId));
       }
-      const base = sanitizeName(nb.title);
-      const assets: AssetDownload[] = nb.pdf
-        ? [{ ossKey: nb.pdf, path: notebookPdfPath(folder, dir) }]
+      const base = nbName(nb);
+      const assets: AssetDownload[] = usePdf(nb)
+        ? [{ ossKey: nb.pdf!, path: `${roots.notebooks}/${dir}.pdf` }]
         : nb.images.length === 1
-        ? [{ ossKey: nb.images[0], path: notebookSingleImagePath(folder, dir) }]
+        ? [{ ossKey: nb.images[0], path: `${roots.notebooks}/${dir}.png` }]
         : nb.images.map((ossKey, i) => ({
-            ossKey, path: notebookImagePath(folder, dir, base, i + 1),
+            ossKey, path: `${roots.notebooks}/${dir}/${pageName(base, nb.id, i + 1)}.png`,
           }));
       // Content can be unchanged while the target paths move (device folder
       // move, collision suffix) — compare both before skipping.
@@ -101,10 +127,10 @@ export function planSync(
     // notebooks would otherwise never materialize (directories are only
     // created as a side effect of writing files into them). Tracking them
     // also lets deleteRemoved drop the empty shell when the folder goes.
-    for (const f of manifest.folders ?? []) {
+    for (const f of folders ?? []) {
       const key = folderKey(f.id);
       seen.add(key);
-      const path = `${folder}/Notebooks/${folderChain(manifest.folders, f.id).join("/")}`;
+      const path = `${roots.notebooks}/${folderChain(folders, f.id).join("/")}`;
       if (prev.items[key]?.path === path) continue;
       actions.push({ kind: "folder", itemKey: key, path });
     }
@@ -119,24 +145,24 @@ export function planSync(
     // target — every member of a colliding set gets a short id suffix. A file
     // `D.pdf` and a folder `D/` coexist, so the shapes never collide.
     const targetOf = (m: (typeof manifest.memos)[number]) => {
-      const d = memoFolderName(m.date, m.id);
-      return m.pdf ? `${d}.pdf` : d;
+      const d = memoName(m);
+      return usePdf(m) ? `${d}.pdf` : d;
     };
     const targetCount = new Map<string, number>();
     for (const m of manifest.memos) {
       const t = targetOf(m);
-      targetCount.set(t, (targetCount.get(t) ?? 0) + 1);
+      targetCount.set(t.toLowerCase(), (targetCount.get(t.toLowerCase()) ?? 0) + 1);
     }
     for (const m of manifest.memos) {
       const key = memoKey(m.id);
       seen.add(key);
       const hash = hashMemo(m);
-      const base = memoFolderName(m.date, m.id);
-      const dir = (targetCount.get(targetOf(m)) ?? 0) > 1 ? `${base} (${m.id.slice(0, 8)})` : base;
-      const assets: AssetDownload[] = m.pdf
-        ? [{ ossKey: m.pdf, path: memoPdfPath(folder, dir) }]
+      const base = memoName(m);
+      const dir = (targetCount.get(targetOf(m).toLowerCase()) ?? 0) > 1 ? `${base} (${shortId(m.id, manifest.memos.map(n => n.id))})` : base;
+      const assets: AssetDownload[] = usePdf(m)
+        ? [{ ossKey: m.pdf!, path: `${roots.memos}/${dir}.pdf` }]
         : m.images.map((ossKey, i) => ({
-            ossKey, path: memoImagePath(folder, dir, base, i + 1),
+            ossKey, path: `${roots.memos}/${dir}/${pageName(base, m.id, i + 1)}.png`,
           }));
       // Content can be unchanged while the target paths move (a colliding memo
       // appeared and forced the suffix) — compare both before skipping.
@@ -148,13 +174,22 @@ export function planSync(
   }
 
   if (settings.syncFiles) {
+    const fileNames = collisionNames(manifest.files.map(f => {
+      const full = f.name || f.key.split("/").pop() || "file.bin";
+      const ext = full.includes(".") ? full.split(".").pop()! : f.fmt || "";
+      const title = full.includes(".") ? full.slice(0, -(ext.length + 1)) : full;
+      return [f.key, nameFromTemplate(settings.attachmentName || "{title}", { title, id: hashString(f.key), ext })];
+    }));
     for (const f of manifest.files) {
       const key = fileKey(f.key);
       seen.add(key);
-      const path = filePath(folder, f.name || f.key.split("/").pop() || "file.bin");
+      const full = f.name || f.key.split("/").pop() || "file.bin";
+      const ext = full.includes(".") ? full.split(".").pop()! : f.fmt || "";
+      const path = `${roots.files}/${fileNames.get(f.key)}${ext ? `.${sanitizeName(ext)}` : ""}`;
+      const hash = f.sig || String(f.size ?? "");
       const p = prev.items[key];
-      if (p && p.size === f.size && p.path === path) continue;
-      actions.push({ kind: "file", itemKey: key, ossKey: f.key, path, size: f.size, hash: String(f.size ?? "") });
+      if (p && p.size === f.size && p.path === path && p.hash === hash) continue;
+      actions.push({ kind: "file", itemKey: key, ossKey: f.key, path, size: f.size, hash });
     }
   }
 
@@ -166,6 +201,16 @@ export function planSync(
     }
   }
 
+  const destinations = new Map<string, string>();
+  for (const a of actions) {
+    if (a.kind === "delete" || a.kind === "folder") continue;
+    const paths = a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])];
+    for (const path of paths) {
+      const prior = destinations.get(path.toLowerCase());
+      if (prior) throw new Error(`Naming settings produce duplicate path: ${path}. Include {id} or {page} in the template.`);
+      destinations.set(path.toLowerCase(), a.itemKey);
+    }
+  }
   return actions;
 }
 
@@ -197,8 +242,81 @@ export async function executeSync(
     await rmdirIfEmpty(parentFolder(dir));
   };
 
+  const binaryHash = async (bytes: ArrayBuffer) => {
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest), x => x.toString(16).padStart(2, "0")).join("");
+  };
+  // Check every old and new destination before writing any part of an item.
+  const owners = new Map<string, string>();
+  for (const [key, item] of Object.entries(prev.items)) for (const path of [item.path, ...(item.assets || [])]) {
+    if (path) owners.set(path.toLowerCase(), key);
+  }
+  const claimed = new Map<string, string>();
+  for (const a of actions) {
+    if (a.kind === "delete" || a.kind === "folder") continue;
+    for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(path.toLowerCase(), a.itemKey);
+  }
   for (const a of actions) {
     try {
+      const old = prev.items[a.itemKey];
+      const destinations = a.kind === "images" ? a.assets.map(x => x.path) : a.kind === "note" ? [a.path, ...a.assets.map(x => x.path)] : a.kind === "file" ? [a.path] : [];
+      const previousPaths = old ? [old.path, ...(old.assets || [])].filter(Boolean) : [];
+      let blocked = false;
+      for (const path of destinations) {
+        const owner = owners.get(path.toLowerCase());
+        if ((owner && owner !== a.itemKey) || (!previousPaths.includes(path) && await io.exists(path))) {
+          summary.skippedUserEdited.push(path); blocked = true;
+        }
+      }
+      // Check known checksums before updates, renames, and deletions.
+      for (const path of previousPaths) {
+        if (!await io.exists(path)) continue;
+        if (path === old?.path && old.written && a.kind !== "images") {
+          if (hashString(await io.read(path)) !== old.written) { summary.skippedUserEdited.push(path); blocked = true; }
+        } else if (old?.binaryHashes?.[path] && io.readBinary) {
+          if (await binaryHash(await io.readBinary(path)) !== old.binaryHashes[path]) { summary.skippedUserEdited.push(path); blocked = true; }
+        }
+        if (a.kind === "delete" && claimed.has(path.toLowerCase()) && claimed.get(path.toLowerCase()) !== a.itemKey) blocked = true;
+      }
+      if (blocked) continue;
+      const binaryHashes: Record<string, string> = {};
+      const staged = new Map<string, ArrayBuffer | null>();
+      const assets = a.kind === "images" || a.kind === "note" ? a.assets : a.kind === "file" ? [{ path: a.path, ossKey: a.ossKey }] : [];
+      for (const asset of assets) {
+        try {
+          const bytes = await fetcher.object(asset.ossKey);
+          staged.set(asset.path, bytes); binaryHashes[asset.path] = await binaryHash(bytes);
+        } catch (e) {
+          if (a.kind === "images" && e instanceof EmptyPageError) staged.set(asset.path, null);
+          else throw e;
+        }
+      }
+      // Legacy binary exports have no baseline. Adopt identical bytes, but keep
+      // differing files rather than guessing whether the user annotated them.
+      if (io.readBinary && old) for (const path of previousPaths) {
+        if ((path === old.path && old.written) || a.kind === "folder" || a.itemKey.startsWith("folder:") || old.binaryHashes?.[path] || !await io.exists(path)) continue;
+        if (a.kind === "delete" || !staged.get(path) || await binaryHash(await io.readBinary(path)) !== binaryHashes[path]) {
+          summary.skippedUserEdited.push(path); blocked = true;
+        }
+      }
+      if (blocked) continue;
+      // Rendering/downloading can take minutes. Recheck after it finishes so
+      // edits made while the sync was fetching are not overwritten.
+      for (const path of destinations) {
+        if (!previousPaths.includes(path) && await io.exists(path)) {
+          summary.skippedUserEdited.push(path); blocked = true;
+        }
+      }
+      for (const path of previousPaths) {
+        if (!await io.exists(path)) continue;
+        if (old?.binaryHashes?.[path] && io.readBinary && await binaryHash(await io.readBinary(path)) !== old.binaryHashes[path]) {
+          summary.skippedUserEdited.push(path); blocked = true;
+        }
+        if (a.kind !== "images" && path === old?.path && old.written && hashString(await io.read(path)) !== old.written) {
+          summary.skippedUserEdited.push(path); blocked = true;
+        }
+      }
+      if (blocked) continue;
       if (a.kind === "note") {
         const prevItem = prev.items[a.itemKey];
         // Guard against overwriting user edits — check the file we previously wrote (prevItem.path),
@@ -211,7 +329,7 @@ export async function executeSync(
           }
         }
         for (const asset of a.assets) {
-          const bytes = await fetcher.object(asset.ossKey);
+          const bytes = staged.get(asset.path)!;
           await io.writeBinary(asset.path, bytes);
           summary.downloaded++;
         }
@@ -231,6 +349,7 @@ export async function executeSync(
           hash: a.hash,
           path: a.path,
           written: hashString(a.content),
+          binaryHashes,
           assets: a.assets.map((x) => x.path),
         };
         summary.written++;
@@ -246,20 +365,9 @@ export async function executeSync(
         }
         const emptied = new Set<string>();
         for (const asset of a.assets) {
-          let bytes: ArrayBuffer;
-          try {
-            bytes = await fetcher.object(asset.ossKey);
-          } catch (e: any) {
-            // The manifest can list a page with nothing to render (every stroke
-            // erased on device; stale ref) — the backend 404s it. Skip the page
-            // rather than fail the item; the content sig in the item hash re-syncs
-            // it the moment the page gains ink. Any previously-written image at
-            // this path is outdated ink for a now-empty page — drop it.
-            if (e?.status !== 404) throw e;
-            if (await io.exists(asset.path)) {
-              await io.remove(asset.path);
-              emptied.add(parentFolder(asset.path));
-            }
+          const bytes = staged.get(asset.path);
+          if (!bytes) {
+            if (await io.exists(asset.path)) { await io.remove(asset.path); emptied.add(parentFolder(asset.path)); }
             continue;
           }
           await io.writeBinary(asset.path, bytes);
@@ -282,7 +390,7 @@ export async function executeSync(
           }
         }
         for (const dir of emptied) await rmdirIfEmpty(dir);
-        items[a.itemKey] = { hash: a.hash, path: "", assets: a.assets.map((x) => x.path) };
+        items[a.itemKey] = { hash: a.hash, path: "", binaryHashes, assets: a.assets.map((x) => x.path) };
         summary.written++;
       } else if (a.kind === "folder") {
         if (io.mkdir && !(await io.exists(a.path))) await io.mkdir(a.path);
@@ -292,9 +400,10 @@ export async function executeSync(
         if (prevPath && prevPath !== a.path) await rmdirIfEmpty(prevPath);
         items[a.itemKey] = { hash: "", path: a.path };
       } else if (a.kind === "file") {
-        const bytes = await fetcher.object(a.ossKey);
+        const bytes = staged.get(a.path)!;
         await io.writeBinary(a.path, bytes);
-        items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size };
+        if (old?.path && old.path !== a.path && await io.exists(old.path)) await io.remove(old.path);
+        items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size, binaryHashes };
         summary.downloaded++;
       } else {
         // delete — a folder item's path is a directory that may hold the
