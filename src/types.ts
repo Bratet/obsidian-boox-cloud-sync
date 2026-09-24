@@ -1,4 +1,5 @@
-// Mirrors the backend manifest (app/backend/manifest.py :: assemble_sources).
+import type { EncryptedSession } from "./credentials";
+// Normalized inventory built locally from BOOX cloud documents.
 export interface Highlight {
   id: string;
   bookId: string;
@@ -19,8 +20,7 @@ export interface Notebook {
   folderId?: string | null; // containing device folder; null/absent = root
   sig?: string | null; // content signature of the item's cloud objects — stroke
   // edits change it even when the page refs stay identical
-  pdf?: string | null; // whole-notebook PDF ref (`pdf:<id>`); absent on older
-  // backends — the plugin then falls back to the per-page image layout
+  pdf?: string | null; // local renderer reference (`pdf:<id>`)
 }
 
 // A Notes-app folder from the device tree (NOTE_TREE type-0 doc).
@@ -36,8 +36,7 @@ export interface Memo {
   images: string[];
   date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
   sig?: string | null; // content signature — see Notebook.sig
-  pdf?: string | null; // whole-memo PDF ref (`pdf:<id>`); absent on older
-  // backends — the plugin then falls back to the per-page image layout
+  pdf?: string | null; // local renderer reference (`pdf:<id>`)
 }
 
 export interface FileItem {
@@ -45,11 +44,13 @@ export interface FileItem {
   size: number | null;
   fmt: string;
   key: string;
+  bucket?: string;
+  sig?: string;
 }
 
 export interface Manifest {
   account: { uid: string | null };
-  folders?: BooxFolder[]; // optional: older backends don't send it
+  folders?: BooxFolder[];
   notebooks: Notebook[];
   memos: Memo[];
   files: FileItem[];
@@ -67,18 +68,20 @@ export interface SyncItem {
   missing?: string[]; // asset paths intentionally absent on disk (device-erased
   // pages the renderer 404s) — healMissingFiles must not re-arm the item for them
   size?: number | null; // for files — change detection by size
+  binaryHashes?: Record<string, string>;
 }
 
 export interface SyncState {
   version: number;
   lastSync: string | null;
   items: Record<string, SyncItem>;
+  accountUid?: string;
 }
 
 // Plugin settings, persisted in .obsidian/plugins/boox-cloud-sync/data.json
 export interface BooxSettings {
-  backendUrl: string;
-  apiKey: string;
+  encryptedSession?: EncryptedSession | null;
+  region?: string;
   account: { uid: string | null; email: string | null } | null;
   syncFolder: string;
   intervalMinutes: number;
@@ -87,4 +90,18 @@ export interface BooxSettings {
   syncMemos: boolean;
   syncFiles: boolean;
   deleteRemoved: boolean;
+  highlightsFolder?: string;
+  notebooksFolder?: string;
+  memosFolder?: string;
+  filesFolder?: string;
+  notebookName?: string;
+  highlightName?: string;
+  memoName?: string;
+  attachmentName?: string;
+  pageName?: string;
+  dateFormat?: string;
+  preserveFolders?: boolean;
+  exportFormat?: "pdf" | "png";
+  highlightTemplate?: string;
+  syncOnStartup?: boolean;
 }

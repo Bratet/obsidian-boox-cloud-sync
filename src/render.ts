@@ -10,15 +10,17 @@ export function renderHighlightBook(
   items: Highlight[],
   idHash: string,
   syncedAt: string,
+  template?: string,
 ): string {
   const fm = frontmatter({
-    "boox-id": items[0]?.bookId ?? "",
+    "boox-id": JSON.stringify(items[0]?.bookId ?? ""),
     "boox-type": "highlight-book",
     "boox-updated": idHash,
     "boox-synced": syncedAt,
   });
   const sorted = [...items].sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
   const blocks = sorted.map((h) => {
+    if (template) return template.replace(/\{(quote|note|chapter|page|id)\}/g, (_, key) => String(h[key as keyof Highlight] ?? ""));
     const head = [h.chapter, h.page != null ? `p.${h.page}` : ""].filter(Boolean).join(" · ");
     const lines = [`> [!quote] ${head}`.trimEnd()];
     for (const ql of (h.quote || "").split("\n")) lines.push(`> ${ql}`);

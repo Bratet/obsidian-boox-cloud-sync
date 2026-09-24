@@ -7,7 +7,7 @@ import { emptyState, bookKey, notebookKey, memoKey } from "./state";
 const SYNC = "2026-06-30T00:00:00.000Z";
 
 const settings = (over: Partial<BooxSettings> = {}): BooxSettings => ({
-  backendUrl: "http://h", apiKey: "k", account: null, syncFolder: "BOOX", intervalMinutes: 30,
+  account: null, syncFolder: "BOOX", intervalMinutes: 30,
   syncHighlights: true, syncNotebooks: true, syncMemos: true, syncFiles: true, deleteRemoved: false, ...over,
 });
 

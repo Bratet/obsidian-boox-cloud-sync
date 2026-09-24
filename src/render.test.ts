@@ -11,7 +11,7 @@ describe("renderHighlightBook", () => {
   it("emits frontmatter, a title and a quote callout with the note", () => {
     const md = renderHighlightBook("My Book", items, "abc123", SYNC);
     expect(md).toContain("boox-type: highlight-book");
-    expect(md).toContain("boox-id: b1");
+    expect(md).toContain('boox-id: "b1"');
     expect(md).toContain("boox-updated: abc123");
     expect(md).toContain(`boox-synced: ${SYNC}`);
     expect(md).toContain("# My Book");

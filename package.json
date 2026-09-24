@@ -1,13 +1,14 @@
 {
   "name": "boox-cloud-sync",
-  "version": "0.2.2",
+  "version": "0.3.2",
   "description": "One-way background sync of your BOOX/Onyx cloud into Obsidian.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:smoke": "node scripts/smoke-test.mjs"
   },
   "repository": {
     "type": "git",
@@ -16,10 +17,16 @@
   "author": "Ahmed Mrabet",
   "license": "MIT",
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^20",
-    "esbuild": "^0.21.5",
+    "esbuild": "^0.28.2",
     "obsidian": "^1.5.7",
     "typescript": "^5.4.5",
-    "vitest": "^1.6.0"
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1",
+    "fflate": "^0.8.3",
+    "pdf-lib": "^1.17.1"
   }
 }

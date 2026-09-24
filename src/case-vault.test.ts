@@ -4,6 +4,7 @@ import { emptyState, notebookKey } from "./state";
 import { hashString } from "./hash";
 import type { Manifest, BooxSettings } from "./types";
 import type { VaultIO, ObjectFetcher } from "./ports";
+import { EmptyPageError } from "./handwriting";
 
 // Obsidian vaults live on case-insensitive filesystems by default (APFS,
 // NTFS): paths differing only in case are the SAME file. These are regression
@@ -14,7 +15,7 @@ import type { VaultIO, ObjectFetcher } from "./ports";
 const SYNC = "2026-07-29T00:00:00.000Z";
 
 const settings = (over: Partial<BooxSettings> = {}): BooxSettings => ({
-  backendUrl: "http://h", apiKey: "k", account: null, syncFolder: "BOOX", intervalMinutes: 30,
+  account: null, syncFolder: "BOOX", intervalMinutes: 30,
   syncHighlights: true, syncNotebooks: true, syncMemos: true, syncFiles: true, deleteRemoved: false, ...over,
 });
 
@@ -172,8 +173,8 @@ describe("healMissingFiles", () => {
     expect(healed.items["file:k1"].path).toBe("");
   });
 
-  it("executeSync records 404-skipped pages as missing so heal ignores them", async () => {
-    const notFound = Object.assign(new Error("empty page"), { status: 404 });
+  it("executeSync records ink-less pages as missing so heal ignores them", async () => {
+    const notFound = new EmptyPageError();
     const picky: ObjectFetcher = {
       object: async (key) => {
         if (key === "render:m1/dead") throw notFound;

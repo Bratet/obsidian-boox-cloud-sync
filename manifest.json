@@ -1,9 +1,9 @@
 {
   "id": "boox-cloud-sync",
   "name": "BOOX Sync",
-  "version": "0.2.2",
+  "version": "0.3.2",
   "minAppVersion": "1.5.0",
-  "description": "One-way background sync of your BOOX/Onyx cloud (highlights, notebooks, memos, files) into your vault. Requires a self-hosted companion backend.",
+  "description": "Sync BOOX cloud highlights, notebooks, calendar memos and files directly into your vault. Local rendering, encrypted login and customizable file names.",
   "author": "Ahmed Mrabet",
   "authorUrl": "https://github.com/Bratet",
   "isDesktopOnly": true

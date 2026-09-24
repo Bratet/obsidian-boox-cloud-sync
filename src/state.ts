@@ -16,6 +16,7 @@ export function parseState(raw: string): SyncState {
       version: SYNC_STATE_VERSION,
       lastSync: typeof j.lastSync === "string" ? j.lastSync : null,
       items: j.items,
+      ...(typeof j.accountUid === "string" ? { accountUid: j.accountUid } : {}),
     };
   } catch {
     return emptyState();

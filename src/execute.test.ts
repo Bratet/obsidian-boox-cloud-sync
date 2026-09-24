@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { executeSync, type SyncAction } from "./sync";
 import { emptyState } from "./state";
 import { hashString } from "./hash";
+import { EmptyPageError } from "./handwriting";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
 function fakeIO(seed: Record<string, string> = {}) {
@@ -234,12 +235,12 @@ describe("executeSync", () => {
     expect(state.items["notebook:n1"].assets).toEqual(["BOOX/Notebooks/J/J_1.png"]);
   });
 
-  it("images: a page that 404s (empty/erased on device) is skipped, not an error", async () => {
+  it("images: an explicitly empty page is skipped and its previously managed image removed", async () => {
     // The manifest can list a page whose strokes were all erased on the device —
     // the renderer 404s it. One dead page must not poison the whole item.
     const stale = "BOOX/Calendar memo/20260607/20260607_6.png";
     const { io, files, bin } = fakeIO({ [stale]: "old ink" });
-    const notFound = Object.assign(new Error("empty page"), { status: 404 });
+    const notFound = new EmptyPageError();
     const picky: ObjectFetcher = {
       object: async (key) => {
         if (key === "render:m1/dead") throw notFound;
@@ -252,7 +253,9 @@ describe("executeSync", () => {
         { ossKey: "render:m1/dead", path: stale },
       ],
     };
-    const { state, summary } = await executeSync([action], emptyState(), io, picky);
+    const previous = emptyState();
+    previous.items["memo:m1"] = { hash: "old", path: "", assets: [stale] };
+    const { state, summary } = await executeSync([action], previous, io, picky);
     expect(bin.has("BOOX/Calendar memo/20260607/20260607_1.png")).toBe(true);
     expect(files.has(stale)).toBe(false); // outdated ink for the now-empty page is dropped
     expect(summary.errors).toHaveLength(0);
