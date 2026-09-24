@@ -294,6 +294,9 @@ export async function executeSync(
     for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(foldPath(path), a.itemKey);
   }
   for (const a of actions) {
+    // Binary files this action has already put on disk, with their hashes —
+    // recorded even if a later write fails, so a retry recognizes them as ours.
+    const written: Record<string, string> = {};
     try {
       const old = prev.items[a.itemKey];
       const destinations = a.kind === "images" ? a.assets.map(x => x.path) : a.kind === "note" ? [a.path, ...a.assets.map(x => x.path)] : a.kind === "file" ? [a.path] : [];
@@ -379,6 +382,7 @@ export async function executeSync(
         for (const asset of a.assets) {
           const bytes = staged.get(asset.path)!;
           await io.writeBinary(asset.path, bytes);
+          written[asset.path] = binaryHashes[asset.path];
           summary.downloaded++;
         }
         // A case-only rename targets the SAME file on the case-insensitive
@@ -442,6 +446,7 @@ export async function executeSync(
             await io.remove(oldCase);
           }
           await io.writeBinary(asset.path, bytes);
+          written[asset.path] = binaryHashes[asset.path];
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
@@ -478,6 +483,7 @@ export async function executeSync(
       } else if (a.kind === "file") {
         const bytes = staged.get(a.path)!;
         await io.writeBinary(a.path, bytes);
+        written[a.path] = binaryHashes[a.path];
         if (old?.path && old.path !== a.path && await io.exists(old.path)) await io.remove(old.path);
         items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size, binaryHashes };
         summary.downloaded++;
@@ -499,6 +505,17 @@ export async function executeSync(
         summary.deleted++;
       }
     } catch (e: any) {
+      // A partial write (page 1 landed, page 2 failed) keeps the old item hash
+      // so the next run re-syncs it, but adopts the files already written —
+      // otherwise their new bytes read as user edits and block the retry.
+      if (Object.keys(written).length) {
+        const cur = items[a.itemKey] ?? { hash: "", path: "" };
+        items[a.itemKey] = {
+          ...cur,
+          assets: [...new Set([...(cur.assets ?? []), ...Object.keys(written).filter((p) => p !== cur.path)])],
+          binaryHashes: { ...cur.binaryHashes, ...written },
+        };
+      }
       summary.errors.push({ itemKey: a.itemKey, message: e?.message || String(e) });
     }
   }
