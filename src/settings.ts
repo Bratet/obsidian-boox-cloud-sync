@@ -15,15 +15,11 @@ export class BooxSettingTab extends PluginSettingTab {
     const el = this.containerEl; el.empty(); const s = this.plugin.settings;
     const heading = (text: string) => new Setting(el).setName(text).setHeading();
     heading("BOOX account");
-    const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : s.encryptedSession ? "Session locked. Unlock to resume sync." : "Not connected";
+    const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : s.encryptedSession ? "Upgrade pending: enter your old passphrase once. No more unlocking after that." : "Not connected";
     const account = new Setting(el).setName("Connection").setDesc(status);
-    if (s.encryptedSession && !this.plugin.connected) account.addButton(b => b.setButtonText("Unlock").setCta().onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), true).open()));
+    if (s.encryptedSession && !this.plugin.connected) account.addButton(b => b.setButtonText("Finish upgrade").setCta().onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), true).open()));
     account.addButton(b => b.setButtonText(s.account ? "Connect again" : "Connect").setDisabled(this.plugin.syncing).onClick(() => new ConnectModal(this.app, this.plugin, () => this.display()).open()));
     if (this.plugin.connected || s.encryptedSession) account.addButton(b => b.setButtonText("Disconnect").setDisabled(this.plugin.syncing).onClick(async () => { await this.plugin.disconnect(); this.display(); }));
-    if (this.plugin.connected && !s.encryptedSession) new Setting(el).setName("Remember connection").setDesc("This connection is only in memory. Save it encrypted so you can unlock it after restarting Obsidian.")
-      .addButton(b => b.setButtonText("Remember connection").onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), false, true).open()));
-    if (this.plugin.connected && s.encryptedSession) new Setting(el).setName("Lock session").setDesc("Pause syncing and clear the decrypted session from memory.")
-      .addButton(b => b.setButtonText("Lock").setDisabled(this.plugin.syncing).onClick(() => { this.plugin.lock(); this.display(); }));
     let syncButton: ButtonComponent;
     const syncStatus = new Setting(el).setName("Sync status").setDesc(this.plugin.status)
       .addButton(b => { syncButton = b; b.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing).setCta().onClick(async () => {
@@ -48,14 +44,14 @@ export class BooxSettingTab extends PluginSettingTab {
     text("syncFolder", "Sync folder", "Vault folder for BOOX content. Changing it starts a separate mirror; existing files stay in the old folder.", v => {
       const path = safeFolder(v); if (!path) throw new Error("Choose a non-empty sync folder."); return path;
     });
-    new Setting(el).setName("Sync interval (minutes)").setDesc("0 disables scheduled sync. Obsidian must be open and the session unlocked.").addText(t => {
+    new Setting(el).setName("Sync interval (minutes)").setDesc("0 disables scheduled sync. Obsidian must be open. Unchanged notebooks and memos are skipped, so a sync with nothing new is quick.").addText(t => {
       t.setValue(String(s.intervalMinutes)); t.inputEl.type = "number"; t.inputEl.min = "0";
       t.inputEl.addEventListener("change", async () => { const n = Number(t.getValue());
         if (!Number.isInteger(n) || n < 0 || n > 1440) { new Notice("Enter a whole number from 0 to 1440."); return; }
         s.intervalMinutes = n; await this.plugin.saveSettings(); this.plugin.rescheduleInterval();
       });
     });
-    toggle("syncOnStartup", "Sync after unlocking", "Start syncing as soon as the saved session is unlocked.");
+    toggle("syncOnStartup", "Sync on startup", "Start syncing a few seconds after Obsidian opens.");
     for (const [key, title] of [["syncHighlights", "Book highlights"], ["syncNotebooks", "Notebooks"], ["syncMemos", "Calendar memos"], ["syncFiles", "Attachments"]] as const) toggle(key, title);
     toggle("deleteRemoved", "Remove files deleted from BOOX", "Only unchanged files previously written by this plugin are removed. Off by default.");
     heading("Folders and file names");

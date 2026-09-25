@@ -13,7 +13,8 @@ export interface AssetDownload {
 
 export type SyncAction =
   | { kind: "note"; itemKey: string; path: string; content: string; hash: string; assets: AssetDownload[] }
-  | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[] } // bare images, no note
+  // bare images, no note; `modified` = newest cloud write (see adoptUnchangedLegacy)
+  | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[]; modified?: number | null }
   | { kind: "folder"; itemKey: string; path: string } // a device folder's directory, even when empty
   | { kind: "file"; itemKey: string; ossKey: string; path: string; size: number | null; hash: string }
   | { kind: "delete"; itemKey: string; path: string; assets: string[] };
@@ -123,7 +124,7 @@ export function planSync(
       const prevItem = prev.items[key];
       if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
-      actions.push({ kind: "images", itemKey: key, hash, assets });
+      actions.push({ kind: "images", itemKey: key, hash, assets, modified: nb.modified ?? null });
     }
     // Device folders are items in their own right: a folder holding no
     // notebooks would otherwise never materialize (directories are only
@@ -171,7 +172,7 @@ export function planSync(
       const prevItem = prev.items[key];
       if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
-      actions.push({ kind: "images", itemKey: key, hash, assets });
+      actions.push({ kind: "images", itemKey: key, hash, assets, modified: m.modified ?? null });
     }
   }
 
@@ -242,6 +243,8 @@ export interface SyncSummary {
   deleted: number;
   skippedUserEdited: string[];
   errors: { itemKey: string; message: string }[];
+  updated: string[]; // already-synced notebooks/memos re-rendered with new content (first path of each)
+  adopted: number; // pre-checksum items confirmed unchanged from timestamps, without re-rendering
 }
 
 export async function executeSync(
@@ -252,7 +255,7 @@ export async function executeSync(
   checkpoint?: (state: SyncState) => Promise<void>,
 ): Promise<{ state: SyncState; summary: SyncSummary }> {
   const items: Record<string, SyncItem> = { ...prev.items };
-  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
+  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [], updated: [], adopted: 0 };
 
   // Every path the previous state tracked, keyed by case-fold — regardless of
   // which item owned it. A write landing on a case-variant of any old file
@@ -294,7 +297,38 @@ export async function executeSync(
     if (a.kind === "delete" || a.kind === "folder") continue;
     for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(foldPath(path), a.itemKey);
   }
+  // Items synced before per-file checksums existed carry a source hash from
+  // the old backend: every one of them looks changed now, and re-rendering
+  // them all on every run is slow and never settles. When none of an item's
+  // cloud objects was written after its vault files were, the doc is
+  // unchanged: adopt the files as they are, recording the new source hash and
+  // their checksums, so only genuinely edited docs are re-rendered.
+  const adopted = new Set<string>();
+  if (io.mtime && io.readBinary) for (const a of actions) {
+    if (a.kind !== "images" || a.modified == null) continue;
+    const old = prev.items[a.itemKey];
+    const paths = a.assets.map(x => x.path);
+    if (!old || old.pending || old.path || (old.assets ?? []).join("\n") !== paths.join("\n")) continue;
+    if (paths.some(p => old.binaryHashes?.[p])) continue; // has a baseline: the normal path handles it
+    const missing = new Set(old.missing ?? []);
+    try {
+      const binaryHashes: Record<string, string> = {};
+      let fresh = true;
+      for (const path of paths) {
+        if (!(await io.exists(path))) { if (missing.has(path)) continue; fresh = false; break; }
+        const mtime = await io.mtime(path);
+        if (mtime == null || mtime < a.modified) { fresh = false; break; }
+        binaryHashes[path] = await binaryHash(await io.readBinary(path));
+      }
+      if (!fresh) continue;
+      items[a.itemKey] = { hash: a.hash, path: "", binaryHashes, assets: paths, ...(old.missing?.length ? { missing: old.missing } : {}) };
+      adopted.add(a.itemKey); summary.adopted++;
+    } catch { /* unreadable: fall through to a normal re-render */ }
+  }
+  if (adopted.size && checkpoint) await checkpoint({ ...prev, items: { ...items } });
+
   for (const a of actions) {
+    if (adopted.has(a.itemKey)) continue;
     const before = items[a.itemKey];
     try {
       const old = prev.items[a.itemKey];
@@ -345,6 +379,10 @@ export async function executeSync(
       // differing files rather than guessing whether the user annotated them.
       if (io.readBinary && old) for (const path of previousPaths) {
         if ((path === old.path && old.written) || a.kind === "folder" || a.itemKey.startsWith("folder:") || old.binaryHashes?.[path] || !await io.exists(path)) continue;
+        // A rendered notebook/memo file listed in this item's own state was
+        // written by the plugin; a fresh render never matches the old bytes,
+        // so comparing them would keep it stale forever. Overwrite it.
+        if (a.kind === "images" && (old.assets ?? []).includes(path)) continue;
         if (a.kind === "delete" || !staged.get(path) || await binaryHash(await io.readBinary(path)) !== binaryHashes[path]) {
           summary.skippedUserEdited.push(path); blocked = true;
         }
@@ -485,6 +523,7 @@ export async function executeSync(
           ...(missing.length ? { missing } : {}),
         };
         summary.written++;
+        if (prevItem && a.assets.some(x => staged.get(x.path))) summary.updated.push(a.assets.find(x => staged.get(x.path))!.path);
       } else if (a.kind === "folder") {
         if (io.mkdir && !(await io.exists(a.path))) await io.mkdir(a.path);
         // A rename/move leaves the old directory behind; the notebooks inside

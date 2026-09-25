@@ -22,7 +22,7 @@ This is the standalone **0.3.3** source build; a release has not been published 
 3. Copy `main.js` and `manifest.json` there. No `styles.css` is needed.
 4. Enable BOOX Sync in Obsidian's Community plugins settings, or reload it after replacing the files.
 
-Requires desktop Obsidian 1.5 or newer. The plugin inherits Obsidian's controls and theme.
+Requires desktop Obsidian 1.11.4 or newer. The plugin inherits Obsidian's controls and theme.
 
 ## Connect directly to BOOX
 
@@ -30,14 +30,15 @@ Requires desktop Obsidian 1.5 or newer. The plugin inherits Obsidian's controls 
 2. Open **Settings → BOOX Sync → Connect**.
 3. Select the same region as the tablet: **Europe** or **Global**.
 4. Enter your BOOX account email, send a code, and enter the six-digit code.
-5. To remember the connection, choose a **local unlock passphrase** of at least 12 characters. This is separate from your BOOX login. Or turn off **Remember this connection** to keep the session only in memory until Obsidian closes.
-6. Select **Connect and sync**.
+5. Select **Connect and sync**.
 
-A remembered connection starts locked after Obsidian restarts. Use the **Unlock saved BOOX session** command or **Unlock** in settings. Sync then runs on the configured interval while Obsidian is open and the session is unlocked. **Sync now** runs on demand; `0` minutes disables scheduled runs. **Sync after unlocking** controls the immediate run after unlocking.
+The connection is saved in your system keychain through Obsidian's secret storage, so sync resumes by itself after Obsidian restarts. There's no passphrase. Sync runs every 15 minutes by default while Obsidian is open; **Sync now** runs on demand, and `0` minutes disables scheduled runs. **Sync on startup** controls the run shortly after Obsidian opens.
 
-If your connection is only in memory, **Remember connection** lets you encrypt it without signing in to BOOX again.
+Notebooks and memos whose cloud content hasn't changed are skipped without rendering. When an already-synced doc changes on the tablet, only that doc is re-rendered, and the sync notice names it.
 
-**Lock** clears the decrypted session from memory. **Disconnect** also removes its saved encrypted copy; it does not delete local exports or revoke other BOOX sessions. If BOOX expires the session, connect again with a new email code. If you forget the local passphrase, reconnect and choose another; it cannot be recovered.
+**Disconnect** removes the saved connection from the keychain; it does not delete local exports or revoke other BOOX sessions. If BOOX expires the session, connect again with a new email code.
+
+Upgrading from 0.3.x, where the connection was locked with a passphrase: select **Finish upgrade** in settings and enter the old passphrase one last time. The connection then moves to the keychain.
 
 ## Customize folders and filenames
 
@@ -66,7 +67,7 @@ Naming and export changes apply at the next sync. Previously managed, unchanged 
 
 The plugin contacts the selected BOOX host (`eur.boox.com` or `push.boox.com`) and BOOX's Alibaba OSS storage endpoints over HTTPS. It does not contact a companion service or send telemetry. Your account still uses BOOX cloud; this is not an offline tablet connection.
 
-Remembered session tokens are stored in `data.json` encrypted with AES-256-GCM, a random salt and nonce, and a key derived from your passphrase using PBKDF2-SHA-256 (600,000 iterations). The passphrase and plaintext token are not saved. Account email, account ID, and ordinary preferences are unencrypted. Vault sync/backups may copy the encrypted session and account metadata; use a strong passphrase. Encryption at rest does not isolate an unlocked session from other code running inside Obsidian.
+The BOOX session token is stored in Obsidian's secret storage (the operating system keychain), never in `data.json`, so vault sync and backups don't copy it. Account email, account ID, and ordinary preferences are stored unencrypted in `data.json`. Secret storage does not isolate the session from other code running inside Obsidian.
 
 Temporary BOOX storage credentials and downloaded rendering blobs stay in memory for a sync run. Handwriting files download in batches of up to four; duplicate requests share one download. The raw blob cache is bounded at 32 MiB and evicts the least recently used entries. PDF pages are compressed as they are added so decoded images can be released before rendering the next page. Large PDFs still require memory proportional to their compressed embedded pages and the current page's working buffers.
 

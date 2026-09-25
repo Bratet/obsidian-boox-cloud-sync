@@ -26,6 +26,16 @@ describe("standalone settings migration", () => {
   it("rejects invalid intervals, regions and setting types", () => {
     const restored = restorePreferences({ token: "secret", region: "foreign.example", intervalMinutes: -1, syncFiles: "false", exportFormat: "exe" });
     expect(restored.session).toBeNull();
-    expect(restored.settings).toMatchObject({ region: "eur", intervalMinutes: 30, syncFiles: true, exportFormat: "pdf" });
+    expect(restored.settings).toMatchObject({ region: "eur", intervalMinutes: 15, syncFiles: true, exportFormat: "pdf" });
+  });
+  it("restores a keychain session and drops the legacy encrypted blob", () => {
+    const stored = { region: "push", token: "keychain-token", uid: "u1", email: "a@b.com" };
+    const encrypted = { version: 1, salt: "salt", iv: "iv", ciphertext: "encrypted" };
+    const restored = restorePreferences({ encryptedSession: encrypted, account: null, region: "eur" }, stored);
+    expect(restored.session).toEqual(stored);
+    expect(restored.settings.encryptedSession).toBeNull();
+    expect(restored.settings.region).toBe("push");
+    expect(restored.settings.account).toEqual({ uid: "u1", email: "a@b.com" });
+    expect(JSON.stringify(restored.settings)).not.toContain("keychain-token");
   });
 });

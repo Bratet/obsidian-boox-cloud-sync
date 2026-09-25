@@ -1,5 +1,5 @@
 import { Plugin, Notice, requestUrl } from "obsidian";
-import { encryptSession, decryptSession, type Session } from "./credentials";
+import { decryptSession, parseSession, type Session } from "./credentials";
 import { ConnectModal } from "./connect-modal";
 import { safeFolder } from "./paths";
 import type { BooxSettings } from "./types";
@@ -9,6 +9,9 @@ import { restorePreferences } from "./preferences";
 import type { VaultIO } from "./ports";
 import { planSync, executeSync, healMissingFiles } from "./sync";
 import { parseState, serializeState, emptyState, STATE_FILENAME } from "./state";
+
+// Secret-storage id for the BOOX session (OS keychain, never in data.json).
+const SESSION_SECRET = "boox-cloud-sync-session";
 
 export default class BooxSyncPlugin extends Plugin {
   settings!: BooxSettings;
@@ -38,12 +41,7 @@ export default class BooxSyncPlugin extends Plugin {
     this.addSettingTab(settingTab);
     this.register(() => settingTab.hide());
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => this.runSync("manual") });
-    this.addCommand({ id: "unlock", name: "Unlock saved BOOX session", callback: () => {
-      if (this.settings.encryptedSession) new ConnectModal(this.app, this, () => {}, true).open();
-      else new Notice("Connect your BOOX account in plugin settings first.");
-    } });
-    this.addCommand({ id: "lock", name: "Lock BOOX session", callback: () => this.lock() });
-    this.status = this.connected ? "Connected for this session. Remember the connection in settings to encrypt it." : this.settings.encryptedSession ? "Session locked. Unlock in BOOX settings." : "Ready to connect.";
+    this.status = this.connected ? "Connected. Ready to sync." : this.settings.encryptedSession ? "Enter your old passphrase once in BOOX settings to finish the upgrade." : "Ready to connect.";
     this.rescheduleInterval();
     // Startup sync after a short delay so the vault is ready.
     this.startupTimeout = window.setTimeout(() => {
@@ -59,13 +57,15 @@ export default class BooxSyncPlugin extends Plugin {
   }
 
   async loadSettings() {
-    const restored = restorePreferences(await this.loadData());
+    const data = await this.loadData();
+    const restored = restorePreferences(data, parseSession(this.app.secretStorage.getSecret(SESSION_SECRET)));
     this.settings = restored.settings;
     this.session = restored.session;
-    if (restored.removeLegacy) {
-      await this.saveSettings();
-      new Notice(this.session ? "BOOX: your existing connection is now kept in memory. Use Remember connection in settings to save it encrypted." : "BOOX Sync now connects directly. Sign in again in plugin settings; your existing vault files are kept.");
-    }
+    // A plaintext token from an old version moves into secret storage.
+    if (this.session && restored.removeLegacy) this.app.secretStorage.setSecret(SESSION_SECRET, JSON.stringify(this.session));
+    if (restored.removeLegacy || (this.session && data?.encryptedSession)) await this.saveSettings();
+    if (restored.removeLegacy && !this.session) new Notice("BOOX Sync now connects directly. Sign in again in plugin settings; your existing vault files are kept.");
+    else if (this.settings.encryptedSession) new Notice("BOOX Sync no longer needs a passphrase. Enter your old one once in BOOX settings to finish the upgrade.", 10000);
   }
 
   async saveSettings() {
@@ -90,44 +90,27 @@ export default class BooxSyncPlugin extends Plugin {
     if (!this.session) throw new Error("Unlock your BOOX session first.");
     return new BooxClient(this.session.region, this.transport, this.session.token, message => { this.status = message; });
   }
-  async connectWith(session: Session, passphrase?: string) {
+  async connectWith(session: Session) {
     if (this.syncing) throw new Error("Wait for the current sync to finish.");
-    const encrypted = passphrase ? await encryptSession(session, passphrase) : null;
     if (this.unloaded) return;
-    this.settings.encryptedSession = encrypted;
+    if (!session.uid) session.uid = String((await new BooxClient(session.region, this.transport, session.token).me()).uid);
+    this.app.secretStorage.setSecret(SESSION_SECRET, JSON.stringify(session));
+    this.settings.encryptedSession = null;
     this.settings.region = session.region;
     this.settings.account = { uid: session.uid, email: session.email };
     await this.saveSettings();
     this.session = session; this.status = "Connected. Ready to sync.";
   }
-  async rememberSession(passphrase: string) {
-    const session = this.session;
-    if (!session) throw new Error("Connect or unlock your BOOX session first.");
-    if (!session.uid) {
-      const account = await this.client().me();
-      session.uid = String(account.uid);
-      this.settings.account = { uid: session.uid, email: session.email };
-    }
-    const encrypted = await encryptSession(session, passphrase);
-    if (this.unloaded || this.session !== session) throw new Error("The connection changed. Try again.");
-    this.settings.encryptedSession = encrypted;
-    await this.saveSettings();
-    this.status = "Connection saved encrypted. Ready to sync.";
-  }
-  async unlock(passphrase: string) {
+  // One-time upgrade from the 0.3.x passphrase lock to secret storage.
+  async unlockLegacy(passphrase: string) {
     if (!this.settings.encryptedSession) throw new Error("No saved session. Connect again.");
     const session = await decryptSession(this.settings.encryptedSession, passphrase);
-    if (this.unloaded) return;
-    this.session = session;
-    this.status = "Unlocked. Ready to sync.";
-  }
-  lock() {
-    if (this.syncing) { new Notice("Wait for the current sync to finish before locking."); return; }
-    this.session = null; this.status = "Session locked. Unlock to resume sync.";
+    await this.connectWith(session);
   }
   async disconnect() {
     if (this.syncing) throw new Error("Wait for the current sync to finish.");
     this.session = null;
+    this.app.secretStorage.setSecret(SESSION_SECRET, "");
     this.settings.encryptedSession = null; this.settings.account = null;
     await this.saveSettings(); this.status = "Disconnected. Local files are kept.";
   }
@@ -166,6 +149,7 @@ export default class BooxSyncPlugin extends Plugin {
       remove: (p) => adapter.remove(checked(p)),
       mkdir: p => ensureDir(checked(p)),
       rmdir: (p) => adapter.rmdir(checked(p), false),
+      mtime: async (p) => (await adapter.stat(checked(p)))?.mtime ?? null,
     };
   }
 
@@ -199,10 +183,15 @@ export default class BooxSyncPlugin extends Plugin {
 
       const parts = [`${summary.written} notes`, `${summary.downloaded} files`];
       if (summary.deleted) parts.push(`${summary.deleted} removed`);
+      if (summary.adopted) parts.push(`${summary.adopted} confirmed unchanged`);
       if (summary.skippedUserEdited.length) parts.push(`${summary.skippedUserEdited.length} kept (edited or unverified)`);
-      this.status = `Last sync: ${new Date().toLocaleString()} — ${parts.join(", ")}${summary.errors.length ? `; ${summary.errors.length} error(s)` : ""}.`;
+      const docName = (path: string) => path.split("/").pop()!;
+      const updated = summary.updated.length
+        ? ` Updated: ${summary.updated.slice(0, 5).map(docName).join(", ")}${summary.updated.length > 5 ? ` and ${summary.updated.length - 5} more` : ""}.` : "";
+      if (summary.updated.length) console.info("BOOX sync updated", summary.updated);
+      this.status = `Last sync: ${new Date().toLocaleString()} — ${parts.join(", ")}${summary.errors.length ? `; ${summary.errors.length} error(s)` : ""}.${updated}`;
       if (trigger === "manual" || summary.written || summary.downloaded || summary.deleted) {
-        new Notice(`BOOX sync: ${parts.join(", ")}.`);
+        new Notice(`BOOX sync: ${parts.join(", ")}.${updated}`, summary.updated.length ? 10000 : undefined);
       }
       if (summary.errors.length) {
         console.error("BOOX sync errors", summary.errors);

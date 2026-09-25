@@ -1,8 +1,8 @@
 {
   "id": "boox-cloud-sync",
   "name": "BOOX Sync",
-  "version": "0.3.3",
-  "minAppVersion": "1.5.0",
+  "version": "0.3.4",
+  "minAppVersion": "1.11.4",
   "description": "Sync BOOX cloud highlights, notebooks, calendar memos and files directly into your vault. Local rendering, encrypted login and customizable file names.",
   "author": "Ahmed Mrabet",
   "authorUrl": "https://github.com/Bratet",

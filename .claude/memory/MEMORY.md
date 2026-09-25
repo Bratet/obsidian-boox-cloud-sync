@@ -1,0 +1,1 @@
+- [Live vault & plugin access](live-vault-plugin-access.md) — vault path, deploy/reload, CLI eval-to-file trick, never read data.json

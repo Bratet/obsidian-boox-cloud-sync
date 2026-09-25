@@ -48,7 +48,9 @@ export function assembleSources(uid: string, docs: Snapshot, objects: CloudObjec
         (position(a) - position(b)) || (layers.get(a)!.ts - layers.get(b)!.ts) || a.localeCompare(b));
     }
     const sig = hashString(JSON.stringify(objs.slice().sort((a, b) => a.key.localeCompare(b.key))));
-    const common = { id, images: pages.map(p => `render:${id}/${p}`), pages: pages.length, sig, pdf: `pdf:${id}` };
+    const times = objs.map(o => Date.parse(o.modified ?? "")).filter(Number.isFinite);
+    const common = { id, images: pages.map(p => `render:${id}/${p}`), pages: pages.length, sig, pdf: `pdf:${id}`,
+      modified: times.length ? Math.max(...times) : null };
     if (kind === "note") result.notebooks.push({ ...common, title: d.title || "Untitled", updatedAt: d.updatedAt ?? null,
       folderId: d.parentUniqueId || null, previewKey: objs.find(o => o.key.endsWith(`/${id}.png`))?.key ?? null });
     else { const raw = String(d.associateDate ?? ""); result.memos.push({ ...common,

@@ -11,6 +11,9 @@ export interface VaultIO {
   // Remove an (empty) directory. May throw on a non-empty one — callers treat
   // this as best-effort cleanup. Optional: older adapters don't provide it.
   rmdir?(path: string): Promise<void>;
+  // Last-modified time (ms since epoch) of a file, or null when unknown.
+  // Optional: without it, items lacking a checksum baseline are re-rendered.
+  mtime?(path: string): Promise<number | null>;
 }
 
 export interface ObjectFetcher {

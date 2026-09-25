@@ -21,6 +21,7 @@ export interface Notebook {
   sig?: string | null; // content signature of the item's cloud objects — stroke
   // edits change it even when the page refs stay identical
   pdf?: string | null; // local renderer reference (`pdf:<id>`)
+  modified?: number | null; // newest cloud write to any of its objects (ms since epoch)
 }
 
 // A Notes-app folder from the device tree (NOTE_TREE type-0 doc).
@@ -37,6 +38,7 @@ export interface Memo {
   date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
   sig?: string | null; // content signature — see Notebook.sig
   pdf?: string | null; // local renderer reference (`pdf:<id>`)
+  modified?: number | null; // see Notebook.modified
 }
 
 export interface FileItem {
