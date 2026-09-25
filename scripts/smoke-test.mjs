@@ -38,8 +38,19 @@ try {
   await page.getByRole("button", { name: "Connect and sync", exact: true }).click();
   await page.waitForFunction(() => window.plugin.connected);
   assert.equal(await page.evaluate(() => window.plugin.settings.account.uid), "synthetic");
+  await page.evaluate(() => { window.plugin.syncing = true; });
+  await page.getByRole("button", { name: "Syncing…", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Syncing…", exact: true }).isDisabled(), true);
+  await page.evaluate(() => { window.plugin.syncing = false; });
+  await page.getByRole("button", { name: "Sync now", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Sync now", exact: true }).isEnabled(), true);
   const pixels = await page.evaluate(() => window.renderFixture());
   assert.deepEqual(pixels, { width: 1860, height: 2480, ink: [18, 52, 86, 255], blank: [255, 255, 255, 255] });
+  const constant = await page.evaluate(() => window.renderConstantFixture());
+  // Edge antialiasing varies between browser versions; every sampled point,
+  // including both chunk joins, must remain dark, opaque, and continuous.
+  for (const [r, g, b, a] of constant.ink) { assert.ok(r < 128); assert.equal(r, g); assert.equal(g, b); assert.equal(a, 255); }
+  assert.deepEqual(constant.blank, [255, 255, 255, 255]);
   assert.deepEqual(errors, []);
-  console.log("Browser smoke passed: naming settings, path validation, direct login flow, and actual PNG dimensions/pixels.");
+  console.log("Browser smoke passed: settings, background sync button recovery, login, pressure-sensitive PNG pixels, and constant-width stroke continuity.");
 } finally { await browser.close(); }

@@ -14,6 +14,9 @@ export const HOSTS: Record<string, string> = { eur: "eur.boox.com", push: "push.
 const xml = new XMLParser({ ignoreAttributes: true, parseTagValue: false, processEntities: true,
   isArray: name => name === "Contents" });
 const encodeKey = (s: string) => s.split("/").map(encodeURIComponent).join("/");
+const REQUEST_TIMEOUT_MS = 120_000;
+const BLOB_CACHE_BYTES = 32 * 1024 * 1024;
+interface StorageCredentials { buckets: any; sts: any; until: number }
 export async function ossSignature(secret: string, bucket: string, key: string, date: string, token: string): Promise<string> {
   const bytes = new TextEncoder();
   const material = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
@@ -24,11 +27,14 @@ export async function ossSignature(secret: string, bucket: string, key: string, 
 export class BooxClient {
   private host: string;
   private cookie = "";
-  private credentials: { buckets: any; sts: any; until: number } | null = null;
+  private credentials: StorageCredentials | null = null;
+  private credentialsLoading: Promise<StorageCredentials> | null = null;
   private manifest: Manifest | null = null;
   private objects: CloudObject[] = [];
+  private objectsByNotebook = new Map<string, CloudObject[]>();
   private uid = "";
   private blobs = new Map<string, ArrayBuffer>();
+  private pendingBlobs = new Map<string, Promise<ArrayBuffer>>();
   private blobBytes = 0;
   constructor(region: string, private transport: HttpTransport, private token = "", private progress: (message: string) => void = () => {}) {
     if (!HOSTS[region]) throw new Error("Choose a supported BOOX region.");
@@ -36,7 +42,13 @@ export class BooxClient {
   }
   private async request(req: HttpRequest): Promise<HttpResponse> {
     for (let attempt = 0; ; attempt++) {
-      const r = await this.transport(req);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // requestUrl has no cancellation API. Bound our wait; a late transport
+      // response is ignored and cannot enter the blob cache after this fails.
+      const r = await Promise.race([
+        this.transport(req),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("BOOX request timed out after two minutes. Try syncing again.")), REQUEST_TIMEOUT_MS); }),
+      ]).finally(() => clearTimeout(timer));
       if (req.method === "GET" && [429, 502, 503, 504].includes(r.status) && attempt < 2) {
         await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); continue;
       }
@@ -105,12 +117,18 @@ export class BooxClient {
     }
     return [...docs.values()];
   }
-  private async oss(key: string, query = "", logicalBucket = "onyx-cloud", refresh = true): Promise<HttpResponse> {
-    if (!this.credentials || this.credentials.until < Date.now()) {
-      const [buckets, sts] = await Promise.all([this.api("config/buckets"), this.api("config/stss")]);
-      this.credentials = { buckets: buckets.data, sts: sts.data, until: Date.now() + 25 * 60_000 };
+  private async storageCredentials(): Promise<StorageCredentials> {
+    if (this.credentials && this.credentials.until > Date.now()) return this.credentials;
+    if (!this.credentialsLoading) {
+      this.credentialsLoading = Promise.all([this.api("config/buckets"), this.api("config/stss")])
+        .then(([buckets, sts]) => this.credentials = { buckets: buckets.data, sts: sts.data, until: Date.now() + 25 * 60_000 })
+        .finally(() => { this.credentialsLoading = null; });
     }
-    const { buckets, sts } = this.credentials;
+    return this.credentialsLoading;
+  }
+  private async oss(key: string, query = "", logicalBucket = "onyx-cloud", refresh = true): Promise<HttpResponse> {
+    const credentials = await this.storageCredentials();
+    const { buckets, sts } = credentials;
     const info = buckets?.[logicalBucket];
     if (!info?.bucket || !info?.aliEndpoint || !sts?.AccessKeySecret || !sts?.SecurityToken) throw new Error("BOOX storage configuration is incomplete.");
     const endpoint = String(info.aliEndpoint).replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -121,7 +139,10 @@ export class BooxClient {
       return await this.request({ url: `https://${info.bucket}.${endpoint}/${encodeKey(key)}${query ? `?${query}` : ""}`, method: "GET",
         headers: { Date: date, "x-oss-security-token": sts.SecurityToken, Authorization: `OSS ${sts.AccessKeyId}:${signature}` } });
     } catch (e) {
-      if (refresh && e instanceof BooxApiError && e.status === 403) { this.credentials = null; return this.oss(key, query, logicalBucket, false); }
+      if (refresh && e instanceof BooxApiError && e.status === 403) {
+        if (this.credentials === credentials) this.credentials = null;
+        return this.oss(key, query, logicalBucket, false);
+      }
       throw e;
     }
   }
@@ -151,17 +172,40 @@ export class BooxClient {
       this.progress(`Reading ${kind}…`); docs[kind as keyof Snapshot] = await this.channel(suffix);
     }
     this.progress("Listing cloud files…"); this.objects = await this.listObjects();
+    this.objectsByNotebook.clear();
+    for (const obj of this.objects) {
+      const [owner, kind, id] = obj.key.split("/");
+      if (owner !== this.uid || !id || !["note", "calendar"].includes(kind)) continue;
+      const key = `${kind}/${id}`;
+      const group = this.objectsByNotebook.get(key) ?? [];
+      group.push(obj); this.objectsByNotebook.set(key, group);
+    }
     this.manifest = assembleSources(this.uid, docs, this.objects);
     return this.manifest;
   }
   private async raw(key: string, bucket = "onyx-cloud"): Promise<ArrayBuffer> {
     const cacheKey = `${bucket}/${key}`;
-    const cached = this.blobs.get(cacheKey); if (cached) return cached;
-    const data = (await this.oss(key, "", bucket)).arrayBuffer;
-    // Bound transient memory; caches disappear after this sync.
-    if (this.blobBytes + data.byteLength > 32 * 1024 * 1024) { this.blobs.clear(); this.blobBytes = 0; }
-    if (data.byteLength <= 32 * 1024 * 1024) { this.blobs.set(cacheKey, data); this.blobBytes += data.byteLength; }
-    return data;
+    const cached = this.blobs.get(cacheKey);
+    if (cached) {
+      this.blobs.delete(cacheKey); this.blobs.set(cacheKey, cached);
+      return cached;
+    }
+    const pending = this.pendingBlobs.get(cacheKey); if (pending) return pending;
+    const download = this.oss(key, "", bucket).then(response => {
+      const data = response.arrayBuffer;
+      // Evict only the least recently used entries. An oversized attachment
+      // bypasses the cache instead of flushing reusable handwriting metadata.
+      if (data.byteLength <= BLOB_CACHE_BYTES) {
+        while (this.blobBytes + data.byteLength > BLOB_CACHE_BYTES) {
+          const oldest = this.blobs.keys().next().value!;
+          this.blobBytes -= this.blobs.get(oldest)!.byteLength; this.blobs.delete(oldest);
+        }
+        this.blobs.set(cacheKey, data); this.blobBytes += data.byteLength;
+      }
+      return data;
+    }).finally(() => { this.pendingBlobs.delete(cacheKey); });
+    this.pendingBlobs.set(cacheKey, download);
+    return download;
   }
   async object(ref: string): Promise<ArrayBuffer> {
     if (!this.manifest) throw new Error("Read BOOX sources before downloading.");
@@ -169,14 +213,18 @@ export class BooxClient {
       const id = ref.slice(4);
       const item = [...this.manifest.notebooks, ...this.manifest.memos].find(n => n.id === id);
       if (!item) throw new Error("Unknown notebook.");
-      return bindPdf(item.images, p => this.object(p));
+      return bindPdf(item.images, p => this.object(p), this.progress);
     }
     if (ref.startsWith("render:")) {
       const [id, page] = ref.slice(7).split("/");
       const kind = this.manifest.notebooks.some(n => n.id === id) ? "note" : "calendar";
-      const objs = this.objects.filter(o => o.key.startsWith(`${this.uid}/${kind}/${id}/`));
-      this.progress(`Rendering page ${page}…`);
-      return renderCloudPage(objs, kind, page, k => this.raw(k));
+      const objs = this.objectsByNotebook.get(`${kind}/${id}`) ?? [];
+      let files = 0;
+      this.progress(`Preparing page ${page}…`);
+      return renderCloudPage(objs, kind, page, k => {
+        this.progress(`Loading page ${page} data (file ${++files})…`);
+        return this.raw(k);
+      }, phase => this.progress(`${phase} page ${page}…`));
     }
     const file = this.manifest.files.find(f => f.key === ref);
     if (!file) throw new Error("File is not in the current BOOX inventory.");

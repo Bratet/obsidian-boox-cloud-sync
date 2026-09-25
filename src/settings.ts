@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, type ButtonComponent } from "obsidian";
 import type BooxSyncPlugin from "./main";
 import type { BooxSettings } from "./types";
 import { ConnectModal } from "./connect-modal";
@@ -24,11 +24,15 @@ export class BooxSettingTab extends PluginSettingTab {
       .addButton(b => b.setButtonText("Remember connection").onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), false, true).open()));
     if (this.plugin.connected && s.encryptedSession) new Setting(el).setName("Lock session").setDesc("Pause syncing and clear the decrypted session from memory.")
       .addButton(b => b.setButtonText("Lock").setDisabled(this.plugin.syncing).onClick(() => { this.plugin.lock(); this.display(); }));
+    let syncButton: ButtonComponent;
     const syncStatus = new Setting(el).setName("Sync status").setDesc(this.plugin.status)
-      .addButton(b => b.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing).setCta().onClick(async () => {
+      .addButton(b => { syncButton = b; b.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing).setCta().onClick(async () => {
         const run = this.plugin.runSync("manual"); this.display(); await run; this.display();
-      }));
-    this.statusTimer = window.setInterval(() => syncStatus.setDesc(this.plugin.status), 500);
+      }); });
+    this.statusTimer = window.setInterval(() => {
+      syncStatus.setDesc(this.plugin.status);
+      syncButton.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing);
+    }, 500);
     heading("Sync");
     const text = (key: keyof BooxSettings, title: string, desc: string, validate?: (v: string) => string) => {
       new Setting(el).setName(title).setDesc(desc).addText(t => {

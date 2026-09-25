@@ -68,7 +68,7 @@ The plugin contacts the selected BOOX host (`eur.boox.com` or `push.boox.com`) a
 
 Remembered session tokens are stored in `data.json` encrypted with AES-256-GCM, a random salt and nonce, and a key derived from your passphrase using PBKDF2-SHA-256 (600,000 iterations). The passphrase and plaintext token are not saved. Account email, account ID, and ordinary preferences are unencrypted. Vault sync/backups may copy the encrypted session and account metadata; use a strong passphrase. Encryption at rest does not isolate an unlocked session from other code running inside Obsidian.
 
-Temporary BOOX storage credentials and downloaded rendering blobs stay in memory for a sync run. The raw blob cache is bounded at 32 MiB. Large PDFs still require memory proportional to their embedded pages.
+Temporary BOOX storage credentials and downloaded rendering blobs stay in memory for a sync run. Handwriting files download in batches of up to four; duplicate requests share one download. The raw blob cache is bounded at 32 MiB and evicts the least recently used entries. PDF pages are compressed as they are added so decoded images can be released before rendering the next page. Large PDFs still require memory proportional to their compressed embedded pages and the current page's working buffers.
 
 ## Safe updates and migration from 0.2.x
 
@@ -80,7 +80,7 @@ The existing `<sync-folder>/.boox-sync.json` tracks managed files. Markdown expo
 
 Old binary exports have no recorded checksum. When the plugin cannot prove they match, it reports them as **kept (edited or unverified)**. To migrate those, choose a new sync folder (the safest option), or move the old files you want to keep out of their managed locations and sync again. Do not delete the sync state as a conflict-resolution shortcut.
 
-Incomplete cloud listings, corrupt handwriting, and failed downloads stop the affected work instead of masquerading as deleted/empty content. Only pages positively identified as having no remaining ink are omitted from an export. All pages of an item are downloaded before its files are replaced. Storage write failures are reported and retried; multi-file writes are not a filesystem transaction.
+Incomplete cloud listings, corrupt handwriting, and failed downloads stop the affected work instead of masquerading as deleted/empty content. Only pages positively identified as having no remaining ink are omitted from an export. All pages of an item are downloaded before its files are replaced. Completed items are checkpointed before the next item starts. If a later write fails, completed writes retain their checksums and the item remains pending, so retries can distinguish partial plugin output from user edits. Multi-file writes are not a filesystem transaction; abrupt termination during an item can still leave unrecorded files.
 
 ## Development and verification
 

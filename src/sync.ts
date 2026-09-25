@@ -73,7 +73,7 @@ export function planSync(
       const title = items[0]?.book || "Book";
       const hash = hashString(hashHighlights(items) + (settings.highlightTemplate || ""));
       const path = `${roots.highlights}/${bookNames.get(bookId)}.md`;
-      if (prev.items[key]?.hash === hash && prev.items[key]?.path === path) continue;
+      if (!prev.items[key]?.pending && prev.items[key]?.hash === hash && prev.items[key]?.path === path) continue;
       const content = renderHighlightBook(title, items, hash, syncedAt, settings.highlightTemplate);
       actions.push({ kind: "note", itemKey: key, path, content, hash, assets: [] });
     }
@@ -121,7 +121,7 @@ export function planSync(
       // Content can be unchanged while the target paths move (device folder
       // move, collision suffix) — compare both before skipping.
       const prevItem = prev.items[key];
-      if (prevItem?.hash === hash &&
+      if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
       actions.push({ kind: "images", itemKey: key, hash, assets });
     }
@@ -133,7 +133,7 @@ export function planSync(
       const key = folderKey(f.id);
       seen.add(key);
       const path = `${roots.notebooks}/${folderChain(folders, f.id).join("/")}`;
-      if (prev.items[key]?.path === path) continue;
+      if (!prev.items[key]?.pending && prev.items[key]?.path === path) continue;
       actions.push({ kind: "folder", itemKey: key, path });
     }
   }
@@ -169,7 +169,7 @@ export function planSync(
       // Content can be unchanged while the target paths move (a colliding memo
       // appeared and forced the suffix) — compare both before skipping.
       const prevItem = prev.items[key];
-      if (prevItem?.hash === hash &&
+      if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
       actions.push({ kind: "images", itemKey: key, hash, assets });
     }
@@ -190,7 +190,7 @@ export function planSync(
       const path = `${roots.files}/${fileNames.get(f.key)}${ext ? `.${sanitizeName(ext)}` : ""}`;
       const hash = f.sig || String(f.size ?? "");
       const p = prev.items[key];
-      if (p && p.size === f.size && p.path === path && p.hash === hash) continue;
+      if (p && !p.pending && p.size === f.size && p.path === path && p.hash === hash) continue;
       actions.push({ kind: "file", itemKey: key, ossKey: f.key, path, size: f.size, hash });
     }
   }
@@ -249,6 +249,7 @@ export async function executeSync(
   prev: SyncState,
   io: VaultIO,
   fetcher: ObjectFetcher,
+  checkpoint?: (state: SyncState) => Promise<void>,
 ): Promise<{ state: SyncState; summary: SyncSummary }> {
   const items: Record<string, SyncItem> = { ...prev.items };
   const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [] };
@@ -294,9 +295,7 @@ export async function executeSync(
     for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(foldPath(path), a.itemKey);
   }
   for (const a of actions) {
-    // Binary files this action has already put on disk, with their hashes —
-    // recorded even if a later write fails, so a retry recognizes them as ours.
-    const written: Record<string, string> = {};
+    const before = items[a.itemKey];
     try {
       const old = prev.items[a.itemKey];
       const destinations = a.kind === "images" ? a.assets.map(x => x.path) : a.kind === "note" ? [a.path, ...a.assets.map(x => x.path)] : a.kind === "file" ? [a.path] : [];
@@ -368,6 +367,16 @@ export async function executeSync(
         }
       }
       if (blocked) continue;
+      // Keep the baseline for each completed write even if a later write fails.
+      // Otherwise a retry mistakes our own partial output for a user edit.
+      const recordWrite = (path: string, checksum: string) => {
+        const current = items[a.itemKey] ?? { hash: "", path: "" };
+        items[a.itemKey] = { ...current, pending: true,
+          assets: [...new Set([...(current.assets ?? []), path])],
+          binaryHashes: { ...current.binaryHashes, [path]: checksum },
+          ...(path === current.path ? { written: undefined } : {}),
+        };
+      };
       if (a.kind === "note") {
         const prevItem = prev.items[a.itemKey];
         // Guard against overwriting user edits — check the file we previously wrote (prevItem.path),
@@ -382,30 +391,32 @@ export async function executeSync(
         for (const asset of a.assets) {
           const bytes = staged.get(asset.path)!;
           await io.writeBinary(asset.path, bytes);
-          written[asset.path] = binaryHashes[asset.path];
+          recordWrite(asset.path, binaryHashes[asset.path]);
           summary.downloaded++;
         }
         // A case-only rename targets the SAME file on the case-insensitive
         // vault: clear the old directory entry first so the write creates the
         // new-case name instead of updating the old one — and never remove it
         // afterwards (that would delete the note just written).
-        const caseOnlyRename = !!prevItem && prevItem.path !== a.path &&
+        const noteChecksum = await binaryHash(new TextEncoder().encode(a.content).buffer);
+        const caseOnlyRename = !!prevItem?.path && prevItem.path !== a.path &&
           foldPath(prevItem.path) === foldPath(a.path);
         if (prevItem && caseOnlyRename && (await io.exists(prevItem.path))) {
           await io.remove(prevItem.path);
         }
         await io.write(a.path, a.content);
+        recordWrite(a.path, noteChecksum);
         // GC stale assets: remove any previously-written asset not in the new
         // set — compared case-folded, so a case-variant of a freshly written
         // asset is recognized as that same file and kept.
-        const newAssetPaths = new Set(a.assets.map((x) => foldPath(x.path)));
+        const newAssetPaths = new Set([a.path, ...a.assets.map((x) => x.path)].map(foldPath));
         for (const oldAssetPath of (prevItem?.assets ?? [])) {
           if (!newAssetPaths.has(foldPath(oldAssetPath)) && (await io.exists(oldAssetPath))) {
             await io.remove(oldAssetPath);
           }
         }
         // Rename cleanup: if the title changed, remove the now-orphaned old-path note
-        if (prevItem && prevItem.path !== a.path && !caseOnlyRename && (await io.exists(prevItem.path))) {
+        if (prevItem?.path && prevItem.path !== a.path && !caseOnlyRename && (await io.exists(prevItem.path))) {
           await io.remove(prevItem.path);
         }
         items[a.itemKey] = {
@@ -446,7 +457,7 @@ export async function executeSync(
             await io.remove(oldCase);
           }
           await io.writeBinary(asset.path, bytes);
-          written[asset.path] = binaryHashes[asset.path];
+          recordWrite(asset.path, binaryHashes[asset.path]);
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
@@ -483,8 +494,10 @@ export async function executeSync(
       } else if (a.kind === "file") {
         const bytes = staged.get(a.path)!;
         await io.writeBinary(a.path, bytes);
-        written[a.path] = binaryHashes[a.path];
-        if (old?.path && old.path !== a.path && await io.exists(old.path)) await io.remove(old.path);
+        recordWrite(a.path, binaryHashes[a.path]);
+        for (const path of previousPaths) {
+          if (foldPath(path) !== foldPath(a.path) && await io.exists(path)) await io.remove(path);
+        }
         items[a.itemKey] = { hash: a.hash, path: a.path, size: a.size, binaryHashes };
         summary.downloaded++;
       } else {
@@ -505,18 +518,12 @@ export async function executeSync(
         summary.deleted++;
       }
     } catch (e: any) {
-      // A partial write (page 1 landed, page 2 failed) keeps the old item hash
-      // so the next run re-syncs it, but adopts the files already written —
-      // otherwise their new bytes read as user edits and block the retry.
-      if (Object.keys(written).length) {
-        const cur = items[a.itemKey] ?? { hash: "", path: "" };
-        items[a.itemKey] = {
-          ...cur,
-          assets: [...new Set([...(cur.assets ?? []), ...Object.keys(written).filter((p) => p !== cur.path)])],
-          binaryHashes: { ...cur.binaryHashes, ...written },
-        };
-      }
       summary.errors.push({ itemKey: a.itemKey, message: e?.message || String(e) });
+    }
+    // Persist completed items before starting another potentially slow render.
+    // A checkpoint failure must stop the run; continuing would lose ownership.
+    if (checkpoint && items[a.itemKey] !== before) {
+      await checkpoint({ ...prev, items: { ...items } });
     }
   }
 

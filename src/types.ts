@@ -61,6 +61,7 @@ export interface Manifest {
 export const SYNC_STATE_VERSION = 1;
 
 export interface SyncItem {
+  pending?: boolean; // some writes completed, but the item must be retried
   hash: string; // hash of the source data — detects BOOX-side changes
   path: string; // vault-relative path written
   written?: string; // hash of the exact note bytes we wrote — detects user edits

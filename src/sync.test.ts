@@ -36,6 +36,13 @@ describe("planSync", () => {
     const prev: SyncState = { version: 1, lastSync: null, items: { [bookKey("b1")]: { hash: "stale", path: "BOOX/Highlights/My Book.md" } } };
     expect(planSync(manifest(), prev, settings(), SYNC)).toHaveLength(1);
   });
+  it("retries an incomplete item even when its source hash and destination match", () => {
+    const note = planSync(manifest(), emptyState(), settings(), SYNC)[0];
+    if (note.kind !== "note") throw new Error("Expected a note");
+    const prev = emptyState();
+    prev.items[note.itemKey] = { pending: true, hash: note.hash, path: note.path };
+    expect(planSync(manifest(), prev, settings(), SYNC)).toHaveLength(1);
+  });
 
   it("emits file actions and per-page image downloads for notebooks", () => {
     const m = manifest({

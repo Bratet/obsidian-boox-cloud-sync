@@ -156,12 +156,12 @@ export default class BooxSyncPlugin extends Plugin {
       write: async (p, c) => {
         checked(p);
         await ensureParent(p);
-        await adapter.write(p, c);
+        await adapter.write(checked(p), c);
       },
       writeBinary: async (p, d) => {
         checked(p);
         await ensureParent(p);
-        await adapter.writeBinary(p, d);
+        await adapter.writeBinary(checked(p), d);
       },
       remove: (p) => adapter.remove(checked(p)),
       mkdir: p => ensureDir(checked(p)),
@@ -192,7 +192,7 @@ export default class BooxSyncPlugin extends Plugin {
       const { state, summary } = await executeSync(actions, prev, io, { object: async key => {
         if (this.unloaded) throw new Error("Plugin unloaded; sync stopped.");
         return client.object(key);
-      } });
+      } }, state => io.write(statePath, serializeState({ ...state, accountUid: manifest.account.uid || undefined })));
       state.lastSync = syncedAt;
       state.accountUid = manifest.account.uid || undefined;
       await io.write(statePath, serializeState(state));

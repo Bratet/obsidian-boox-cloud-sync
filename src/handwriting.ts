@@ -108,6 +108,17 @@ export function strokeWidth(pen: number, thickness: number, pressure: number): n
 }
 const layer = (key: string) => key.split(/\/(?:point|shape)\//)[1]?.split("#")[0] ?? "";
 const timestamp = (key: string) => Number(key.split("#").pop()?.split(".")[0]) || 0;
+// Overlap network latency, but bound buffered data and preserve revision order.
+// Drain each batch before failing so other file tasks cannot update a failed page.
+async function* downloadFiles(keys: string[], get: (key: string) => Promise<ArrayBuffer>) {
+  for (let i = 0; i < keys.length; i += 4) {
+    const results = await Promise.allSettled(keys.slice(i, i + 4).map(async key => ({ key, data: await get(key) })));
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+      yield result.value;
+    }
+  }
+}
 export async function preparePage(objects: CloudObject[], kind: string, page: string, get: (key: string) => Promise<ArrayBuffer>): Promise<Page> {
   const pointKeys = objects.map(o => o.key).filter(k => k.includes("/point/") && k.endsWith("#points"));
   const shapeKeys = objects.map(o => o.key).filter(k => k.includes("/shape/") && k.endsWith(".zip"));
@@ -122,19 +133,24 @@ export async function preparePage(objects: CloudObject[], kind: string, page: st
       selected = new Set([...layers].filter(l => l && content.includes(l)));
       if (virtual.length) composite = true; else [width, height] = parseBounds(data);
     } else if (!layers.has(page)) throw new Error("BOOX page is missing. Sync the tablet and retry.");
-    for (const key of virtual) for (const [id, rect] of tileRects(await get(key))) rects.set(id, rect);
+    for await (const { data } of downloadFiles(virtual, get)) for (const [id, rect] of tileRects(data)) rects.set(id, rect);
     if (!pm && rects.has(page)) { const r = rects.get(page)!; width = r[2] - r[0]; height = r[3] - r[1]; }
   }
   const styles = new Map<string, Style>();
-  for (const key of shapeKeys.filter(k => selected.has(layer(k))).sort((a, b) => timestamp(a) - timestamp(b))) {
-    for (const [id, style] of parseShapes(await get(key))) {
-      if (!styles.has(id) || style.modified >= styles.get(id)!.modified) styles.set(id, style);
-    }
-  }
   const strokes: Stroke[] = [];
-  for (const key of pointKeys.filter(k => selected.has(layer(k)))) {
+  const selectedKeys = [
+    ...shapeKeys.filter(k => selected.has(layer(k))).sort((a, b) => timestamp(a) - timestamp(b)),
+    ...pointKeys.filter(k => selected.has(layer(k))),
+  ];
+  for await (const { key, data } of downloadFiles(selectedKeys, get)) {
+    if (key.includes("/shape/")) {
+      for (const [id, style] of parseShapes(data)) {
+        if (!styles.has(id) || style.modified >= styles.get(id)!.modified) styles.set(id, style);
+      }
+      continue;
+    }
     const r = composite ? rects.get(layer(key)) : undefined;
-    for (const stroke of parsePoints(await get(key))) {
+    for (const stroke of parsePoints(data)) {
       const style = styles.get(stroke.id);
       if (style?.reference || style?.status) continue;
       const m = style?.matrix;
@@ -158,8 +174,9 @@ export async function preparePage(objects: CloudObject[], kind: string, page: st
   for (const s of styles.values()) if (s.matrix) { const m = s.matrix; const factor = Math.sqrt(Math.abs(m[0] * m[4] - m[1] * m[3])); if (factor > 0) s.thickness *= factor; }
   return { width, height, scale, strokes, styles };
 }
-export async function renderCloudPage(objects: CloudObject[], kind: string, page: string, get: (key: string) => Promise<ArrayBuffer>): Promise<ArrayBuffer> {
+export async function renderCloudPage(objects: CloudObject[], kind: string, page: string, get: (key: string) => Promise<ArrayBuffer>, progress: (phase: string) => void = () => {}): Promise<ArrayBuffer> {
   const p = await preparePage(objects, kind, page, get);
+  progress("Drawing");
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(p.width * p.scale)); canvas.height = Math.max(1, Math.round(p.height * p.scale));
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Could not create the handwriting renderer.");
@@ -167,32 +184,59 @@ export async function renderCloudPage(objects: CloudObject[], kind: string, page
     ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     let count = 0;
+    let nextYield = performance.now() + 16;
+    const yieldToUi = async () => {
+      progress(`Drawing (${count.toLocaleString()} segments)`);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      nextYield = performance.now() + 16;
+    };
     for (const stroke of p.strokes) {
       const s = p.styles.get(stroke.id); const color = s?.color ?? 0xff000000;
       ctx.strokeStyle = ctx.fillStyle = `rgb(${(color >>> 16) & 255},${(color >>> 8) & 255},${color & 255})`;
       const pts = stroke.points;
+      // Most pens have a constant width. Draw connected paths instead of
+      // issuing a separate canvas stroke for every pair of sampled points.
+      // Keep pressure-sensitive pens on the variable-width path below.
+      if (pts.length > 1 && s?.pen !== 5 && s?.pen !== 21) {
+        ctx.lineWidth = Math.max(1, (s?.thickness ?? 1) * p.scale);
+        for (let start = 0; start < pts.length - 1; start += 1024) {
+          const end = Math.min(start + 1024, pts.length - 1);
+          ctx.beginPath(); ctx.moveTo(pts[start].x * p.scale, pts[start].y * p.scale);
+          for (let i = start + 1; i <= end; i++) ctx.lineTo(pts[i].x * p.scale, pts[i].y * p.scale);
+          ctx.stroke(); count += end - start;
+          if (performance.now() >= nextYield) await yieldToUi();
+        }
+        continue;
+      }
       for (let i = 0; i < Math.max(1, pts.length - 1); i++) {
         const a = pts[i], b = pts[i + 1] ?? a;
         const w = Math.max(1, strokeWidth(s?.pen ?? 0, s?.thickness ?? 1, (a.pressure + b.pressure) / 2) * p.scale);
         ctx.beginPath(); ctx.lineWidth = w;
         if (pts.length === 1) { ctx.arc(a.x * p.scale, a.y * p.scale, w / 2, 0, Math.PI * 2); ctx.fill(); }
         else { ctx.moveTo(a.x * p.scale, a.y * p.scale); ctx.lineTo(b.x * p.scale, b.y * p.scale); ctx.stroke(); }
-        if (++count % 10000 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        if (++count % 1024 === 0 && performance.now() >= nextYield) await yieldToUi();
       }
     }
+    progress("Encoding");
     const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error("PNG rendering failed.")), "image/png"));
     return await blob.arrayBuffer();
   } finally { canvas.width = canvas.height = 0; }
 }
-export async function bindPdf(refs: string[], render: (ref: string) => Promise<ArrayBuffer>): Promise<ArrayBuffer> {
+export async function bindPdf(refs: string[], render: (ref: string) => Promise<ArrayBuffer>, progress: (message: string) => void = () => {}): Promise<ArrayBuffer> {
   const doc = await PDFDocument.create(); doc.setProducer("BOOX Sync");
-  for (const ref of refs) {
+  for (let i = 0; i < refs.length; i++) {
     let bytes: ArrayBuffer;
-    try { bytes = await render(ref); } catch (e) { if (e instanceof EmptyPageError) continue; throw e; }
+    try { bytes = await render(refs[i]); } catch (e) { if (e instanceof EmptyPageError) continue; throw e; }
+    progress(`Adding page ${i + 1}/${refs.length} to PDF…`);
+    await new Promise(resolve => setTimeout(resolve, 0));
     const png = await doc.embedPng(bytes);
     const page = doc.addPage([png.width * 72 / 226, png.height * 72 / 226]);
     page.drawImage(png, { x: 0, y: 0, width: page.getWidth(), height: page.getHeight() });
+    // embedPng retains decoded RGB pixels until embed() runs. Compress now so
+    // a long notebook doesn't retain ~14 MB of raw pixels for every page.
+    await png.embed();
   }
   if (!doc.getPageCount()) throw new EmptyPageError();
+  progress("Saving PDF…");
   return new Uint8Array(await doc.save()).buffer;
 }

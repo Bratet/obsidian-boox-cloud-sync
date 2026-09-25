@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parsePoints, parseShapes, parseBounds, tileRects, preparePage, EmptyPageError, strokeWidth, bindPdf } from "./handwriting";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
 const fixture = JSON.parse(readFileSync(new URL("./__fixtures__/handwriting.json", import.meta.url), "utf8"));
 const data = (name: string) => new Uint8Array(Buffer.from(fixture[name], "base64")).buffer;
 const id = "a".repeat(36);
@@ -33,6 +33,50 @@ describe("backend handwriting format compatibility", () => {
     const keys = ["u/calendar/n/point/L1#D#points"];
     await expect(preparePage(objects(keys), "calendar", "L1", async () => { throw new Error("network failure"); })).rejects.toThrow("network failure");
   });
+  it("loads eight handwriting files in two batches of four", async () => {
+    vi.useFakeTimers();
+    try {
+      let active = 0, maxActive = 0;
+      const keys = Array.from({ length: 8 }, (_, i) => `u/calendar/n/point/L1#D${i}#points`);
+      const ready = preparePage(objects(keys), "calendar", "L1", async () => {
+        maxActive = Math.max(maxActive, ++active);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        active--; return data("points");
+      });
+      await vi.advanceTimersByTimeAsync(200);
+      expect((await ready).strokes).toHaveLength(8);
+      expect(maxActive).toBe(4);
+      expect(active).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it("applies shape revisions in order even when downloads finish out of order", async () => {
+    vi.useFakeTimers();
+    try {
+      const keys = ["u/calendar/n/shape/L1#S#1.zip", "u/calendar/n/shape/L1#S#2.zip", "u/calendar/n/point/L1#D#points"];
+      const ready = expect(preparePage(objects(keys), "calendar", "L1", async key => {
+        await new Promise(resolve => setTimeout(resolve, key.endsWith("1.zip") ? 100 : 10));
+        return data(key.includes("point/") ? "points" : key.endsWith("2.zip") ? "erased" : "shape");
+      })).rejects.toBeInstanceOf(EmptyPageError);
+      await vi.advanceTimersByTimeAsync(100); await ready;
+    } finally { vi.useRealTimers(); }
+  });
+  it("drains a failed batch and never schedules the remaining page files", async () => {
+    vi.useFakeTimers();
+    try {
+      let completed = 0;
+      const get = vi.fn(async (key: string) => {
+        await new Promise(resolve => setTimeout(resolve, key.includes("D0#") ? 10 : 100));
+        completed++;
+        if (key.includes("D0#")) throw new Error("download failed");
+        return data("points");
+      });
+      const keys = Array.from({ length: 8 }, (_, i) => `u/calendar/n/point/L1#D${i}#points`);
+      const ready = expect(preparePage(objects(keys), "calendar", "L1", get)).rejects.toThrow("download failed");
+      await vi.advanceTimersByTimeAsync(100); await ready;
+      expect(get).toHaveBeenCalledTimes(4);
+      expect(completed).toBe(4);
+    } finally { vi.useRealTimers(); }
+  });
   it("crops and bounds infinite-canvas output", async () => {
     const keys = ["u/note/n/point/L1#D#points", "u/note/n/pageModel/pb/P", "u/note/n/virtual/page/pb/V"];
     const p = await preparePage(objects(keys), "note", "P", async k => data(k.includes("point/") ? "points" : k.includes("virtual/") ? "virtual" : "page"));
@@ -54,5 +98,21 @@ describe("backend handwriting format compatibility", () => {
     const pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBe(2); expect(pdf.getPage(0).getWidth()).toBeCloseTo(72 / 226);
     await expect(bindPdf(["bad"], async () => { throw new Error("missing blob"); })).rejects.toThrow("missing blob");
+  });
+  it("compresses each PDF page before rendering the next one", async () => {
+    const doc = await PDFDocument.create();
+    const create = vi.spyOn(PDFDocument, "create").mockResolvedValue(doc);
+    const png = new Uint8Array(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jhN8AAAAASUVORK5CYII=", "base64")).buffer;
+    try {
+      const output = await bindPdf(["a", "b"], async ref => {
+        if (ref === "b") {
+          const embedded = doc.context.enumerateIndirectObjects().filter(([, object]) =>
+            object instanceof PDFRawStream && object.dict.get(PDFName.of("Subtype")) === PDFName.of("Image"));
+          expect(embedded.length).toBeGreaterThan(0);
+        }
+        return png;
+      });
+      expect((await PDFDocument.load(output)).getPageCount()).toBe(2);
+    } finally { create.mockRestore(); }
   });
 });
