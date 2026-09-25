@@ -1,6 +1,6 @@
 {
   "name": "boox-cloud-sync",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "One-way background sync of your BOOX/Onyx cloud into Obsidian.",
   "main": "main.js",
   "scripts": {

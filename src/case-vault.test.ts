@@ -88,6 +88,29 @@ describe("planSync on a case-insensitive vault", () => {
 });
 
 describe("executeSync on a case-insensitive vault", () => {
+  it("retries a partial case-rename without mistaking its own output for an edit", async () => {
+    const { io, get, names } = apfsIO();
+    io.readBinary = async path => get(path)!.bin!;
+    const original: SyncAction = { kind: "images", itemKey: "notebook:n", hash: "old", assets: [
+      { path: "BOOX/a.png", ossKey: "a" }, { path: "BOOX/b.png", ossKey: "b" },
+    ] };
+    const initial = await executeSync([original], emptyState(), io, fetcher);
+    const write = io.writeBinary;
+    io.writeBinary = async (path, bytes) => { if (path === "BOOX/B.png") throw new Error("disk full"); await write(path, bytes); };
+    const update: SyncAction = { ...original, hash: "new", assets: [
+      { path: "BOOX/A.png", ossKey: "a" }, { path: "BOOX/B.png", ossKey: "b" },
+    ] };
+    const changed = { object: async () => new TextEncoder().encode("updated").buffer };
+    const failed = await executeSync([update], initial.state, io, changed);
+    expect(failed.summary.errors).toHaveLength(1);
+    io.writeBinary = write;
+    const retry = await executeSync([update], await healMissingFiles(failed.state, io), io, changed);
+    expect(retry.summary.skippedUserEdited).toEqual([]);
+    expect(retry.summary.errors).toEqual([]);
+    expect(names()).toEqual(["BOOX/A.png", "BOOX/B.png"]);
+    expect(new TextDecoder().decode(get("BOOX/A.png")?.bin)).toBe("updated");
+    expect(new TextDecoder().decode(get("BOOX/B.png")?.bin)).toBe("updated");
+  });
   it("device case-rename end-to-end: the vault file survives under the new case", async () => {
     // The full July-28 wedge: one sync run sees the old notebook gone and the
     // new case-variant present. Before the fix, the delete removed the file

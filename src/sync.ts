@@ -371,10 +371,11 @@ export async function executeSync(
       // Otherwise a retry mistakes our own partial output for a user edit.
       const recordWrite = (path: string, checksum: string) => {
         const current = items[a.itemKey] ?? { hash: "", path: "" };
+        const aliases = [path, current.path, ...(current.assets ?? [])].filter(p => p && foldPath(p) === foldPath(path));
         items[a.itemKey] = { ...current, pending: true,
           assets: [...new Set([...(current.assets ?? []), path])],
-          binaryHashes: { ...current.binaryHashes, [path]: checksum },
-          ...(path === current.path ? { written: undefined } : {}),
+          binaryHashes: { ...current.binaryHashes, ...Object.fromEntries(aliases.map(p => [p, checksum])) },
+          ...(current.path && foldPath(path) === foldPath(current.path) ? { written: undefined } : {}),
         };
       };
       if (a.kind === "note") {

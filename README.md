@@ -15,7 +15,7 @@ Notebook folders, including empty folders, are preserved. Notebook and memo page
 
 ## Install this version
 
-This is the standalone **0.3.1** source build; a release has not been published automatically.
+This is the standalone **0.3.3** source build; a release has not been published automatically.
 
 1. Run `npm ci` and `npm run build` in this repository.
 2. Create `<your-vault>/.obsidian/plugins/boox-cloud-sync/`.
