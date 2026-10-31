@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, type ButtonComponent } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice, Platform, type ButtonComponent } from "obsidian";
 import type BooxSyncPlugin from "./main";
 import type { BooxSettings } from "./types";
 import { ConnectModal } from "./connect-modal";
@@ -14,12 +14,33 @@ export class BooxSettingTab extends PluginSettingTab {
     this.hide();
     const el = this.containerEl; el.empty(); const s = this.plugin.settings;
     const heading = (text: string) => new Setting(el).setName(text).setHeading();
-    heading("BOOX account");
-    const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : s.encryptedSession ? "Upgrade pending: enter your old passphrase once. No more unlocking after that." : "Not connected";
-    const account = new Setting(el).setName("Connection").setDesc(status);
-    if (s.encryptedSession && !this.plugin.connected) account.addButton(b => b.setButtonText("Finish upgrade").setCta().onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), true).open()));
-    account.addButton(b => b.setButtonText(s.account ? "Connect again" : "Connect").setDisabled(this.plugin.syncing).onClick(() => new ConnectModal(this.app, this.plugin, () => this.display()).open()));
-    if (this.plugin.connected || s.encryptedSession) account.addButton(b => b.setButtonText("Disconnect").setDisabled(this.plugin.syncing).onClick(async () => { await this.plugin.disconnect(); this.display(); }));
+    heading("BOOX source");
+    new Setting(el).setName("Read notes from")
+      .setDesc(Platform.isAndroidApp
+        ? "This tablet reads the BOOX apps' own files, including notes the BOOX cloud never received. No login needed."
+        : "A Syncthing folder is a copy of the tablet's .ksync folder kept current by Syncthing. It includes notes the BOOX cloud never received. No login needed.")
+      .addDropdown(d => {
+        if (Platform.isAndroidApp) d.addOption("tablet", "This tablet");
+        if (Platform.isDesktopApp) d.addOption("folder", "Syncthing folder");
+        d.addOption("cloud", "BOOX cloud").setValue(s.source || "cloud").setDisabled(this.plugin.syncing)
+          .onChange(async v => { s.source = v === "tablet" || v === "folder" ? v : "cloud"; await this.plugin.saveSettings(); this.display(); });
+      });
+    if (s.source === "folder") new Setting(el).setName("Syncthing folder")
+      .setDesc("Absolute path of the folder Syncthing syncs the tablet's .ksync into. It contains couch, document and point.")
+      .addText(t => {
+        t.setPlaceholder("/home/you/BOOX-ksync").setValue(s.folderPath || "");
+        t.inputEl.addEventListener("change", async () => {
+          if (this.plugin.syncing) { new Notice("Wait for the current sync before changing settings."); t.setValue(s.folderPath || ""); return; }
+          s.folderPath = t.getValue().trim().replace(/\/+$/, ""); await this.plugin.saveSettings(); this.display();
+        });
+      });
+    if (s.source === "cloud") {
+      const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : s.encryptedSession ? "Upgrade pending: enter your old passphrase once. No more unlocking after that." : "Not connected";
+      const account = new Setting(el).setName("Connection").setDesc(status);
+      if (s.encryptedSession && !this.plugin.connected) account.addButton(b => b.setButtonText("Finish upgrade").setCta().onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), true).open()));
+      account.addButton(b => b.setButtonText(s.account ? "Connect again" : "Connect").setDisabled(this.plugin.syncing).onClick(() => new ConnectModal(this.app, this.plugin, () => this.display()).open()));
+      if (this.plugin.connected || s.encryptedSession) account.addButton(b => b.setButtonText("Disconnect").setDisabled(this.plugin.syncing).onClick(async () => { await this.plugin.disconnect(); this.display(); }));
+    }
     let syncButton: ButtonComponent;
     const syncStatus = new Setting(el).setName("Sync status").setDesc(this.plugin.status)
       .addButton(b => { syncButton = b; b.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing).setCta().onClick(async () => {

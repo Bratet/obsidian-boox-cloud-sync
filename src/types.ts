@@ -83,6 +83,11 @@ export interface SyncState {
 
 // Plugin settings, persisted in .obsidian/plugins/boox-cloud-sync/data.json
 export interface BooxSettings {
+  // "cloud" reads the BOOX cloud; "tablet" reads the BOOX files of the
+  // Android tablet Obsidian runs on; "folder" reads a copy of the tablet's
+  // .ksync folder (kept current by Syncthing) at `folderPath` on a desktop.
+  source?: "cloud" | "tablet" | "folder";
+  folderPath?: string;
   encryptedSession?: EncryptedSession | null;
   region?: string;
   account: { uid: string | null; email: string | null } | null;

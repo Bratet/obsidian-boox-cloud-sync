@@ -6,7 +6,8 @@ const production = process.argv[2] === "production";
 const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
-  external: ["obsidian", "electron", "@codemirror/*", "@lezer/*"],
+  // fs is Node's, provided by desktop Obsidian; loaded lazily by the Syncthing-folder source.
+  external: ["obsidian", "electron", "@codemirror/*", "@lezer/*", "fs"],
   format: "cjs",
   target: "es2020",
   platform: "browser",

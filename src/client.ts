@@ -2,7 +2,7 @@ import type { Manifest } from "./types";
 import type { Session } from "./credentials";
 import { assembleSources, type Snapshot, type CloudObject } from "./manifest";
 import { XMLParser } from "fast-xml-parser";
-import { renderCloudPage, bindPdf } from "./handwriting";
+import { renderHandwritingRef } from "./handwriting";
 
 export interface HttpRequest { url: string; method: string; headers: Record<string, string>; body?: string }
 export interface HttpResponse { status: number; text: string; arrayBuffer: ArrayBuffer }
@@ -209,23 +209,8 @@ export class BooxClient {
   }
   async object(ref: string): Promise<ArrayBuffer> {
     if (!this.manifest) throw new Error("Read BOOX sources before downloading.");
-    if (ref.startsWith("pdf:")) {
-      const id = ref.slice(4);
-      const item = [...this.manifest.notebooks, ...this.manifest.memos].find(n => n.id === id);
-      if (!item) throw new Error("Unknown notebook.");
-      return bindPdf(item.images, p => this.object(p), this.progress);
-    }
-    if (ref.startsWith("render:")) {
-      const [id, page] = ref.slice(7).split("/");
-      const kind = this.manifest.notebooks.some(n => n.id === id) ? "note" : "calendar";
-      const objs = this.objectsByNotebook.get(`${kind}/${id}`) ?? [];
-      let files = 0;
-      this.progress(`Preparing page ${page}…`);
-      return renderCloudPage(objs, kind, page, k => {
-        this.progress(`Loading page ${page} data (file ${++files})…`);
-        return this.raw(k);
-      }, phase => this.progress(`${phase} page ${page}…`));
-    }
+    const rendered = await renderHandwritingRef(ref, this.manifest, (kind, id) => this.objectsByNotebook.get(`${kind}/${id}`) ?? [], k => this.raw(k), this.progress);
+    if (rendered) return rendered;
     const file = this.manifest.files.find(f => f.key === ref);
     if (!file) throw new Error("File is not in the current BOOX inventory.");
     return this.raw(ref, file.bucket);

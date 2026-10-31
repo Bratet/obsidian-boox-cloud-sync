@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { PDFDocument } from "pdf-lib";
 import { executeSync, type SyncAction } from "./sync";
 import { emptyState } from "./state";
 import { hashString } from "./hash";
@@ -386,5 +387,58 @@ describe("executeSync", () => {
     expect(files.get(oldPath)).toBe("user modified this"); // untouched
     expect(files.has(newPath)).toBe(false);                // not created
     expect(summary.skippedUserEdited).toContain(oldPath);
+  });
+
+  describe("untracked PDFs at destinations (first sync on a device)", () => {
+    // updateMetadata: false — otherwise pdf-lib stamps its own Producer.
+    const pdf = async (producer?: string) => {
+      const doc = await PDFDocument.create({ updateMetadata: false }); doc.addPage();
+      if (producer) doc.setProducer(producer);
+      return (await doc.save({ updateFieldAppearances: false })).buffer as ArrayBuffer;
+    };
+    const backup = (p: string) => `BOOX/.backup/${p.slice("BOOX/".length)}`;
+    const memo = "BOOX/Calendar memo/20261015.pdf", unlabeled = "BOOX/Notebooks/Plan.pdf", scan = "BOOX/Notebooks/Scan.pdf";
+    const actions: SyncAction[] = [
+      { kind: "images", itemKey: "memo:m", hash: "h", assets: [{ ossKey: "pdf:m", path: memo }] },
+      { kind: "images", itemKey: "notebook:p", hash: "h", assets: [{ ossKey: "pdf:p", path: unlabeled }] },
+      { kind: "images", itemKey: "notebook:s", hash: "h", assets: [{ ossKey: "pdf:s", path: scan }] },
+    ];
+    const seeded = async () => {
+      const { io, bin } = fakeIO();
+      const originals: Record<string, ArrayBuffer> = { [memo]: await pdf("BOOX Sync"), [unlabeled]: await pdf(), [scan]: await pdf("NeoPdf") };
+      for (const [p, b] of Object.entries(originals)) bin.set(p, b);
+      io.readBinary = async p => bin.get(p)!;
+      return { io, bin, originals };
+    };
+
+    it("backs up plugin-made and unlabeled PDFs before replacing them, and keeps other PDFs", async () => {
+      const { io, bin, originals } = await seeded();
+      const { state, summary } = await executeSync(actions, emptyState(), io, fetcher, undefined, backup);
+      for (const p of [memo, unlabeled]) {
+        expect(bin.get(backup(p))).toBe(originals[p]);
+        expect(bin.get(p)).not.toBe(originals[p]);
+      }
+      expect(state.items["memo:m"].assets).toEqual([memo]);
+      expect(bin.get(scan)).toBe(originals[scan]);
+      expect(bin.has(backup(scan))).toBe(false);
+      expect(summary.backedUp.sort()).toEqual([memo, unlabeled].sort());
+      expect(summary.skippedUserEdited).toEqual([scan]);
+    });
+
+    it("replaces no untracked file when no backup location is given", async () => {
+      const { io, bin, originals } = await seeded();
+      const { summary } = await executeSync(actions, emptyState(), io, fetcher);
+      for (const p of [memo, unlabeled, scan]) expect(bin.get(p)).toBe(originals[p]);
+      expect(summary.skippedUserEdited.sort()).toEqual([memo, unlabeled, scan].sort());
+      expect(summary.backedUp).toEqual([]);
+    });
+
+    it("backs up an untracked file before removing it for a page with no ink", async () => {
+      const { io, bin, originals } = await seeded();
+      const empty: ObjectFetcher = { object: async () => { throw new EmptyPageError(); } };
+      await executeSync([actions[0]], emptyState(), io, empty, undefined, backup);
+      expect(bin.has(memo)).toBe(false);
+      expect(bin.get(backup(memo))).toBe(originals[memo]);
+    });
   });
 });

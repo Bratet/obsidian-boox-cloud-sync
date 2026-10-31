@@ -3,7 +3,7 @@ import { hashHighlights, hashNotebook, hashMemo, hashString } from "./hash";
 import { renderHighlightBook } from "./render";
 import { foldPath, folderChain, sanitizeName, safeFolder, nameFromTemplate, formatDate, notebookDir, parentFolder } from "./paths";
 import { bookKey, notebookKey, folderKey, memoKey, fileKey, groupByBook } from "./state";
-import { EmptyPageError } from "./handwriting";
+import { EmptyPageError, isGeneratedPdf } from "./handwriting";
 import type { VaultIO, ObjectFetcher } from "./ports";
 
 export interface AssetDownload {
@@ -245,6 +245,7 @@ export interface SyncSummary {
   errors: { itemKey: string; message: string }[];
   updated: string[]; // already-synced notebooks/memos re-rendered with new content (first path of each)
   adopted: number; // pre-checksum items confirmed unchanged from timestamps, without re-rendering
+  backedUp: string[]; // untracked files copied to the backup folder before being replaced
 }
 
 export async function executeSync(
@@ -253,9 +254,12 @@ export async function executeSync(
   io: VaultIO,
   fetcher: ObjectFetcher,
   checkpoint?: (state: SyncState) => Promise<void>,
+  // Where to copy an untracked existing file before replacing it. Without it,
+  // untracked files at destinations are never replaced.
+  backupPath?: (path: string) => string,
 ): Promise<{ state: SyncState; summary: SyncSummary }> {
   const items: Record<string, SyncItem> = { ...prev.items };
-  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [], updated: [], adopted: 0 };
+  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [], updated: [], adopted: 0, backedUp: [] };
 
   // Every path the previous state tracked, keyed by case-fold — regardless of
   // which item owned it. A write landing on a case-variant of any old file
@@ -297,6 +301,15 @@ export async function executeSync(
     if (a.kind === "delete" || a.kind === "folder") continue;
     for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(foldPath(path), a.itemKey);
   }
+  // A device syncing for the first time has no state entry for files already
+  // in the vault (Obsidian Sync does not carry .boox-sync.json). An untracked
+  // PDF at a notebook/memo destination that looks like this plugin's or its
+  // predecessor's export (Producer "BOOX Sync", or none) is taken over — but
+  // only when the caller provides `backupPath`: the original is copied there
+  // first, because a Producer-less PDF can also be the user's own file. Any
+  // other file at a destination is kept.
+  const adoptable = async (a: SyncAction, path: string) => !!backupPath && a.kind === "images" && !owners.has(foldPath(path))
+    && /\.pdf$/i.test(path) && !!io.readBinary && await isGeneratedPdf(await io.readBinary(path));
   // Items synced before per-file checksums existed carry a source hash from
   // the old backend: every one of them looks changed now, and re-rendering
   // them all on every run is slow and never settles. When none of an item's
@@ -330,6 +343,8 @@ export async function executeSync(
   for (const a of actions) {
     if (adopted.has(a.itemKey)) continue;
     const before = items[a.itemKey];
+    // Untracked destinations this action takes over; backed up before writing.
+    const takeover = new Set<string>();
     try {
       const old = prev.items[a.itemKey];
       const destinations = a.kind === "images" ? a.assets.map(x => x.path) : a.kind === "note" ? [a.path, ...a.assets.map(x => x.path)] : a.kind === "file" ? [a.path] : [];
@@ -348,7 +363,7 @@ export async function executeSync(
       let blocked = false;
       for (const path of destinations) {
         const owner = owners.get(foldPath(path));
-        if ((owner && owner !== a.itemKey && !releasing.has(owner)) || (!ours(path) && await io.exists(path))) {
+        if ((owner && owner !== a.itemKey && !releasing.has(owner)) || (!ours(path) && await io.exists(path) && !await adoptable(a, path))) {
           summary.skippedUserEdited.push(path); blocked = true;
         }
       }
@@ -391,9 +406,9 @@ export async function executeSync(
       // Rendering/downloading can take minutes. Recheck after it finishes so
       // edits made while the sync was fetching are not overwritten.
       for (const path of destinations) {
-        if (!ours(path) && await io.exists(path)) {
-          summary.skippedUserEdited.push(path); blocked = true;
-        }
+        if (ours(path) || !await io.exists(path)) continue;
+        if (await adoptable(a, path)) takeover.add(path);
+        else { summary.skippedUserEdited.push(path); blocked = true; }
       }
       for (const path of previousPaths) {
         if (!await io.exists(path)) continue;
@@ -480,6 +495,11 @@ export async function executeSync(
         const missing: string[] = [];
         for (const asset of a.assets) {
           const bytes = staged.get(asset.path);
+          // An untracked file being taken over is kept under backupPath first.
+          if (takeover.has(asset.path) && backupPath && io.readBinary && await io.exists(asset.path)) {
+            await io.writeBinary(backupPath(asset.path), await io.readBinary(asset.path));
+            summary.backedUp.push(asset.path);
+          }
           if (!bytes) {
             // Nothing to render (every stroke erased on device; stale ref).
             // Any previously-written image here is outdated ink — drop it, and

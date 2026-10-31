@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate";
 import { PDFDocument } from "pdf-lib";
 import type { CloudObject } from "./manifest";
+import type { Manifest } from "./types";
 
 export interface Point { x: number; y: number; pressure: number }
 export interface Stroke { id: string; points: Point[] }
@@ -239,4 +240,34 @@ export async function bindPdf(refs: string[], render: (ref: string) => Promise<A
   if (!doc.getPageCount()) throw new EmptyPageError();
   progress("Saving PDF…");
   return new Uint8Array(await doc.save()).buffer;
+}
+// A PDF this plugin (Producer "BOOX Sync") or its predecessor backend (no
+// Producer) wrote. Such a file at a notebook/memo destination is an earlier
+// export of the same document, not the user's own file.
+export async function isGeneratedPdf(bytes: ArrayBuffer): Promise<boolean> {
+  try {
+    const producer = (await PDFDocument.load(bytes, { updateMetadata: false, ignoreEncryption: true })).getProducer();
+    return !producer || producer === "BOOX Sync";
+  } catch { return false; }
+}
+// Render a manifest reference: `pdf:<id>` binds every page of a notebook or
+// memo, `render:<id>/<page>` draws one page. Any other reference is not
+// handwriting and returns null.
+export async function renderHandwritingRef(ref: string, manifest: Manifest, objectsOf: (kind: string, id: string) => CloudObject[],
+  get: (key: string) => Promise<ArrayBuffer>, progress: (message: string) => void): Promise<ArrayBuffer | null> {
+  if (ref.startsWith("pdf:")) {
+    const id = ref.slice(4);
+    const item = [...manifest.notebooks, ...manifest.memos].find(n => n.id === id);
+    if (!item) throw new Error("Unknown notebook.");
+    return bindPdf(item.images, async p => (await renderHandwritingRef(p, manifest, objectsOf, get, progress))!, progress);
+  }
+  if (!ref.startsWith("render:")) return null;
+  const [id, page] = ref.slice(7).split("/");
+  const kind = manifest.notebooks.some(n => n.id === id) ? "note" : "calendar";
+  let files = 0;
+  progress(`Preparing page ${page}…`);
+  return renderCloudPage(objectsOf(kind, id), kind, page, k => {
+    progress(`Loading page ${page} data (file ${++files})…`);
+    return get(k);
+  }, phase => progress(`${phase} page ${page}…`));
 }
