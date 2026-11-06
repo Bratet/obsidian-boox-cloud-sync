@@ -37,11 +37,11 @@ describe("executeSync", () => {
     const { io, files, bin } = fakeIO();
     const action: SyncAction = {
       kind: "note", itemKey: "notebook:n1", path: "BOOX/Notebooks/J.md", content: "# J\n",
-      hash: "h", assets: [{ ossKey: "uid/note/n1/n1.png", path: "BOOX/_assets/n1/n1.png" }],
+      hash: "h", assets: [{ ossKey: "uid/note/n1/n1.png", path: "BOOX/attachments/n1/n1.png" }],
     };
     const { state, summary } = await executeSync([action], emptyState(), io, fetcher);
     expect(files.get("BOOX/Notebooks/J.md")).toBe("# J\n");
-    expect(bin.has("BOOX/_assets/n1/n1.png")).toBe(true);
+    expect(bin.has("BOOX/attachments/n1/n1.png")).toBe(true);
     expect(summary.written).toBe(1);
     expect(summary.downloaded).toBe(1);
     expect(state.items["notebook:n1"].written).toBe(hashString("# J\n"));
@@ -98,7 +98,7 @@ describe("executeSync", () => {
 
   it("delete removes assets too", async () => {
     const notePath = "BOOX/Highlights/Gone.md";
-    const assetFile = "BOOX/_assets/gone/p.png";
+    const assetFile = "BOOX/attachments/gone/p.png";
     const { io, files } = fakeIO({ [notePath]: "x", [assetFile]: "img" });
     const prev = emptyState();
     prev.items["highlight-book:gone"] = { hash: "h", path: notePath, assets: [assetFile] };
@@ -113,8 +113,8 @@ describe("executeSync", () => {
 
   it("stale-asset GC on image change", async () => {
     const notePath = "BOOX/Notebooks/N.md";
-    const keepAsset = "BOOX/_assets/n1/a.png";
-    const staleAsset = "BOOX/_assets/n1/b.png";
+    const keepAsset = "BOOX/attachments/n1/a.png";
+    const staleAsset = "BOOX/attachments/n1/b.png";
     // seed the stale asset on disk; note path does not exist (new note — user-edit guard won't trigger)
     const { io, files, bin } = fakeIO({ [staleAsset]: "old-bytes" });
     const prev = emptyState();
@@ -168,73 +168,6 @@ describe("executeSync", () => {
     ]);
   });
 
-  it("migrates a memo from the old note layout — removes the .md and stale assets", async () => {
-    const oldNote = "BOOX/Memos/m1.md";
-    const oldAsset = "BOOX/_assets/m1/0.png";
-    const { io, files, bin, removedDirs } = fakeIO({ [oldNote]: "note", [oldAsset]: "img" });
-    const prev = emptyState();
-    prev.items["memo:m1"] = { hash: "old", path: oldNote, assets: [oldAsset] };
-    const action: SyncAction = {
-      kind: "images", itemKey: "memo:m1", hash: "new", assets: [
-        { ossKey: "render:m1/layA", path: "BOOX/Calendar memo/20260611/20260611_1.png" },
-      ],
-    };
-    const { state } = await executeSync([action], prev, io, fetcher);
-    expect(files.has(oldNote)).toBe(false);
-    expect(files.has(oldAsset)).toBe(false);
-    expect(bin.has("BOOX/Calendar memo/20260611/20260611_1.png")).toBe(true);
-    expect(state.items["memo:m1"].path).toBe("");
-    // the emptied old folders are cleaned up
-    expect(removedDirs).toContain("BOOX/_assets/m1");
-    expect(removedDirs).toContain("BOOX/Memos");
-  });
-
-  it("migrates a notebook from the old note layout — removes the .md and stale assets", async () => {
-    const oldNote = "BOOX/Notebooks/J.md";
-    const oldAsset = "BOOX/_assets/n1/pA.png";
-    const { io, files, bin, removedDirs } = fakeIO({ [oldNote]: "note we wrote", [oldAsset]: "img" });
-    const prev = emptyState();
-    prev.items["notebook:n1"] = {
-      hash: "old", path: oldNote, written: hashString("note we wrote"), assets: [oldAsset],
-    };
-    const action: SyncAction = {
-      kind: "images", itemKey: "notebook:n1", hash: "new", assets: [
-        { ossKey: "render:n1/pA", path: "BOOX/Notebooks/J/J_1.png" },
-      ],
-    };
-    const { state } = await executeSync([action], prev, io, fetcher);
-    expect(files.has(oldNote)).toBe(false);
-    expect(files.has(oldAsset)).toBe(false);
-    expect(bin.has("BOOX/Notebooks/J/J_1.png")).toBe(true);
-    expect(state.items["notebook:n1"].path).toBe("");
-    expect(removedDirs).toContain("BOOX/_assets/n1");
-    // ...and once the last notebook leaves _assets, the shell folder goes too
-    expect(removedDirs).toContain("BOOX/_assets");
-  });
-
-  it("images: preserves a user-edited note (and its assets) when migrating off the note layout", async () => {
-    const oldNote = "BOOX/Notebooks/J.md";
-    const oldAsset = "BOOX/_assets/n1/pA.png";
-    const { io, files, bin } = fakeIO({ [oldNote]: "user changed this", [oldAsset]: "img" });
-    const prev = emptyState();
-    prev.items["notebook:n1"] = {
-      hash: "old", path: oldNote, written: hashString("original we wrote"), assets: [oldAsset],
-    };
-    const action: SyncAction = {
-      kind: "images", itemKey: "notebook:n1", hash: "new", assets: [
-        { ossKey: "render:n1/pA", path: "BOOX/Notebooks/J/J_1.png" },
-      ],
-    };
-    const { state, summary } = await executeSync([action], prev, io, fetcher);
-    // the edited note keeps working: neither it nor the assets it embeds are touched
-    expect(files.get(oldNote)).toBe("user changed this");
-    expect(files.has(oldAsset)).toBe(true);
-    expect(summary.skippedUserEdited).toContain(oldNote);
-    // the new image layout is still written and becomes the managed state
-    expect(bin.has("BOOX/Notebooks/J/J_1.png")).toBe(true);
-    expect(state.items["notebook:n1"].path).toBe("");
-    expect(state.items["notebook:n1"].assets).toEqual(["BOOX/Notebooks/J/J_1.png"]);
-  });
 
   it("images: an explicitly empty page is skipped and its previously managed image removed", async () => {
     // The manifest can list a page whose strokes were all erased on the device —
@@ -411,18 +344,20 @@ describe("executeSync", () => {
       return { io, bin, originals };
     };
 
-    it("backs up plugin-made and unlabeled PDFs before replacing them, and keeps other PDFs", async () => {
+    it("backs up plugin-made PDFs and keeps other PDFs", async () => {
       const { io, bin, originals } = await seeded();
       const { state, summary } = await executeSync(actions, emptyState(), io, fetcher, undefined, backup);
-      for (const p of [memo, unlabeled]) {
+      for (const p of [memo]) {
         expect(bin.get(backup(p))).toBe(originals[p]);
         expect(bin.get(p)).not.toBe(originals[p]);
       }
       expect(state.items["memo:m"].assets).toEqual([memo]);
-      expect(bin.get(scan)).toBe(originals[scan]);
-      expect(bin.has(backup(scan))).toBe(false);
-      expect(summary.backedUp.sort()).toEqual([memo, unlabeled].sort());
-      expect(summary.skippedUserEdited).toEqual([scan]);
+      for (const p of [unlabeled, scan]) {
+        expect(bin.get(p)).toBe(originals[p]);
+        expect(bin.has(backup(p))).toBe(false);
+      }
+      expect(summary.backedUp).toEqual([memo]);
+      expect(summary.skippedUserEdited).toEqual([unlabeled, scan]);
     });
 
     it("replaces no untracked file when no backup location is given", async () => {

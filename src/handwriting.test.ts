@@ -1,12 +1,19 @@
 import { readFileSync } from "node:fs";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { parsePoints, parseShapes, parseBounds, tileRects, preparePage, EmptyPageError, strokeWidth, bindPdf } from "./handwriting";
 import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
-const fixture = JSON.parse(readFileSync(new URL("./__fixtures__/handwriting.json", import.meta.url), "utf8"));
-const data = (name: string) => new Uint8Array(Buffer.from(fixture[name], "base64")).buffer;
+const fixture: unknown = JSON.parse(readFileSync(new URL("./__fixtures__/handwriting.json", import.meta.url), "utf8"));
+const data = (name: string) => {
+  if (typeof fixture !== "object" || fixture === null || !(name in fixture)) throw new Error(`Missing fixture: ${name}`);
+  const encoded: unknown = (fixture as Record<string, unknown>)[name];
+  if (typeof encoded !== "string") throw new Error(`Invalid fixture: ${name}`);
+  return new Uint8Array(Buffer.from(encoded, "base64")).buffer;
+};
 const id = "a".repeat(36);
 const objects = (names: string[]) => names.map(key => ({ key, size: 1 }));
 describe("backend handwriting format compatibility", () => {
+  beforeAll(() => { vi.stubGlobal("window", globalThis); });
+  afterAll(() => { vi.unstubAllGlobals(); });
   it("decodes the backend's synthetic big-endian point fixture", () => {
     expect(parsePoints(data("points"))).toEqual([{ id, points: [{ x: 10, y: 20, pressure: 2048 }, { x: 30, y: 40, pressure: 4095 }] }]);
   });

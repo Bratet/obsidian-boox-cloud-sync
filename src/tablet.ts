@@ -17,14 +17,15 @@ export interface TabletFiles {
 const CHANNELS = { notes: "NOTE_TREE", library: "READER_LIBRARY", calendar: "CALENDAR_TREE" } as const;
 
 // Reads notebooks, memos and highlights from the BOOX apps' own files — the
-// same data the BOOX cloud mirrors, including what never uploaded. `root` is
-// the tablet's .ksync folder, or a copy of it kept current by Syncthing.
+// same data the BOOX cloud mirrors, including what never uploaded.
 export class TabletSource {
   private manifest: Manifest | null = null;
   private objects = new Map<string, CloudObject[]>();
   private paths = new Map<string, string>();
 
-  constructor(private files: TabletFiles, private progress: (message: string) => void = () => {}, private root = TABLET_ROOT) {}
+  private root = TABLET_ROOT;
+
+  constructor(private files: TabletFiles, private progress: (message: string) => void = () => {}) {}
 
   async sources(): Promise<Manifest> {
     this.progress("Reading BOOX note databases…");
@@ -39,7 +40,7 @@ export class TabletSource {
       const latest = Math.max(-1, ...[...snapshot.notes, ...snapshot.calendar].map(d => Number(d.updatedAt) || 0));
       if (latest > newest) { uid = candidate; docs = snapshot; newest = latest; }
     }
-    if (!docs) throw new Error(`No BOOX note databases found in ${this.root}/couch. On the tablet, open the Notes app once; with Syncthing, wait for the first sync to finish.`);
+    if (!docs) throw new Error(`No BOOX note databases found in ${this.root}/couch. On the tablet, open the Notes app once.`);
     docs.library = await this.channel(uid, "library");
     const items = [
       ...docs.notes.filter(d => d.uniqueId && d.status !== 0).map(d => ({ id: String(d.uniqueId), kind: "note" })),
@@ -63,7 +64,7 @@ export class TabletSource {
     if (!this.manifest) throw new Error("Read the tablet before rendering.");
     const rendered = await renderHandwritingRef(ref, this.manifest, (kind, id) => this.objects.get(`${kind}/${id}`) ?? [], async key => {
       const path = this.paths.get(key);
-      if (!path) throw new Error("BOOX page file is missing. With Syncthing, wait for it to finish syncing and retry.");
+      if (!path) throw new Error("BOOX page file is missing. Sync again in a moment.");
       const bytes = await this.files.read(path);
       return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     }, this.progress);
@@ -99,9 +100,7 @@ export class TabletSource {
     const out: CloudObject[] = [];
     const add = (sub: string, dir: string, entries: TabletEntry[]) => {
       for (const e of entries) {
-        // Syncthing writes incoming files as `.syncthing.<name>.tmp` and
-        // renames them when complete; a partial file is not BOOX data.
-        if (e.type !== "file" || (e.name.startsWith(".syncthing.") && e.name.endsWith(".tmp"))) continue;
+        if (e.type !== "file") continue;
         const key = `${uid}/${kind}/${id}/${sub}/${e.name}`;
         this.paths.set(key, `${dir}/${e.name}`);
         out.push({ key, size: e.size, etag: `${e.size}-${e.mtime}`, modified: new Date(e.mtime).toISOString() });

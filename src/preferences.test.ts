@@ -1,41 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { restorePreferences } from "./preferences";
+import { DEFAULT_SETTINGS, restorePreferences } from "./preferences";
 
-describe("standalone settings migration", () => {
-  it("keeps an existing direct connection in memory and removes the plaintext token from persisted settings", () => {
-    const restored = restorePreferences({ token: "synthetic-secret", region: "eur", account: { uid: "u", email: "test@example.com" }, syncFolder: "99 - Meta/BOOX" });
-    expect(restored.session?.token).toBe("synthetic-secret");
-    expect(restored.removeLegacy).toBe(true);
-    expect(JSON.stringify(restored.settings)).not.toContain("synthetic-secret");
-    expect(restored.settings.syncFolder).toBe("99 - Meta/BOOX");
-  });
-  it("does not reuse a companion-server API key as a BOOX token", () => {
-    const restored = restorePreferences({ apiKey: "old-key", backendUrl: "https://example.com", account: { uid: "u" } });
-    expect(restored.session).toBeNull();
-    expect(restored.settings.account).toBeNull();
-    expect(restored.removeLegacy).toBe(true);
-    expect(JSON.stringify(restored.settings)).not.toContain("old-key");
-  });
-  it("prefers an encrypted connection over an old plaintext field", () => {
-    const encrypted = { version: 1, salt: "salt", iv: "iv", ciphertext: "encrypted" };
-    const restored = restorePreferences({ encryptedSession: encrypted, token: "old-token", region: "eur" });
-    expect(restored.session).toBeNull();
-    expect(restored.settings.encryptedSession).toEqual(encrypted);
-    expect(restored.removeLegacy).toBe(true);
-  });
-  it("rejects invalid intervals, regions and setting types", () => {
-    const restored = restorePreferences({ token: "secret", region: "foreign.example", intervalMinutes: -1, syncFiles: "false", exportFormat: "exe" });
-    expect(restored.session).toBeNull();
-    expect(restored.settings).toMatchObject({ region: "eur", intervalMinutes: 15, syncFiles: true, exportFormat: "pdf" });
-  });
-  it("restores a keychain session and drops the legacy encrypted blob", () => {
-    const stored = { region: "push", token: "keychain-token", uid: "u1", email: "a@b.com" };
-    const encrypted = { version: 1, salt: "salt", iv: "iv", ciphertext: "encrypted" };
-    const restored = restorePreferences({ encryptedSession: encrypted, account: null, region: "eur" }, stored);
-    expect(restored.session).toEqual(stored);
-    expect(restored.settings.encryptedSession).toBeNull();
+describe("preference restoration", () => {
+  it("uses the keychain session for region and account", () => {
+    const session = { region: "push", token: "secret", uid: "u1", email: "a@b.com" };
+    const restored = restorePreferences({ region: "eur", account: { uid: "other", email: "other@example.com" } }, session);
+    expect(restored.session).toEqual(session);
     expect(restored.settings.region).toBe("push");
     expect(restored.settings.account).toEqual({ uid: "u1", email: "a@b.com" });
-    expect(JSON.stringify(restored.settings)).not.toContain("keychain-token");
+    expect(JSON.stringify(restored.settings)).not.toContain("secret");
+  });
+  it("rejects invalid values", () => {
+    const { settings } = restorePreferences({ region: "invalid", intervalMinutes: -1, syncFiles: "false", exportFormat: "exe" });
+    expect(settings).toMatchObject({ region: "eur", intervalMinutes: 15, syncFiles: true, exportFormat: "pdf" });
+  });
+  it("drops unknown keys and clears account without a session", () => {
+    const { settings, session } = restorePreferences({ token: "secret", folderPath: "old", unknown: 1, account: { uid: "u" }, syncFolder: "Notes" });
+    expect(session).toBeNull();
+    expect(settings.account).toBeNull();
+    expect(settings.syncFolder).toBe("Notes");
+    expect(Object.keys(settings).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
+  });
+  it("falls back to cloud for an unsupported source", () => {
+    expect(restorePreferences({ source: "other" }).settings.source).toBe("cloud");
+    expect(restorePreferences({ source: "tablet" }).settings.source).toBe("tablet");
   });
 });

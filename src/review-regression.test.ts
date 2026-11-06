@@ -48,7 +48,7 @@ function memoryVault() {
 
 it.each([false, true])("recovers a partial first import, preserving later user edits: %s", async edited => {
   const { files, io } = memoryVault();
-  const write = io.writeBinary;
+  const write = io.writeBinary.bind(io);
   io.writeBinary = async (path, data) => { if (path.endsWith("B.png")) throw new Error("disk full"); await write(path, data); };
   const action: SyncAction = { kind: "images", itemKey: "notebook:n", hash: "new",
     assets: ["A", "B"].map(p => ({ path: `BOOX/${p}.png`, ossKey: p })) };
@@ -70,7 +70,7 @@ it.each([false, true])("recovers a partial first import, preserving later user e
 
 it("retries a note when its asset was saved before the note write failed", async () => {
   const { io, files } = memoryVault();
-  const write = io.write;
+  const write = io.write.bind(io);
   io.write = async () => { throw new Error("disk full"); };
   const action: SyncAction = { kind: "note", itemKey: "highlight-book:b", path: "BOOX/Book.md", hash: "h", content: "new note",
     assets: [{ path: "BOOX/A.png", ossKey: "A" }] };
@@ -89,7 +89,7 @@ it("recovers a renamed note when cleanup failed without deleting the new note", 
   const original: SyncAction = { kind: "note", itemKey: "highlight-book:b", path: "BOOX/Old.md", hash: "old", content: "old note", assets: [] };
   const fetcher = { object: async () => bytes("cloud") };
   const initial = await executeSync([original], emptyState(), io, fetcher);
-  const remove = io.remove;
+  const remove = io.remove.bind(io);
   io.remove = async () => { throw new Error("file locked"); };
   const renamed = { ...original, path: "BOOX/New.md", hash: "new", content: "new note" };
   const failed = await executeSync([renamed], initial.state, io, fetcher);

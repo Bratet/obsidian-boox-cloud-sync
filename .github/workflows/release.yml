@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Tag must match the manifest version
         run: |
@@ -30,6 +30,7 @@ jobs:
           fi
 
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
 

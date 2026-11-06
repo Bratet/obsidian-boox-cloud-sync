@@ -1,9 +1,9 @@
 {
   "id": "boox-cloud-sync",
-  "name": "BOOX Sync",
-  "version": "0.4.0",
+  "name": "BOOX Notes Sync",
+  "version": "1.0.0",
   "minAppVersion": "1.11.4",
-  "description": "Sync BOOX highlights, notebooks and calendar memos into your vault, from the BOOX cloud or straight from the BOOX tablet itself. Local rendering and customizable file names.",
+  "description": "Import BOOX notebooks, calendar memos and book highlights as PDFs and Markdown, read straight from the BOOX tablet or from the BOOX cloud.",
   "author": "Ahmed Mrabet",
   "authorUrl": "https://github.com/Bratet",
   "isDesktopOnly": false

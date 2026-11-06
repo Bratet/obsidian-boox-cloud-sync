@@ -4,7 +4,7 @@ import { SqliteReader } from "./sqlite";
 // LiteCore document flag: the current revision is a deletion (tombstone).
 const DELETED = 0x01;
 
-export interface CblDoc { id: string; sequence: number; flags: number; body: Record<string, any> }
+export interface CblDoc { id: string; sequence: number; flags: number; body: Record<string, unknown> }
 
 // Live documents of one Couchbase Lite database (`<name>.cblite2/db.sqlite3`
 // plus its WAL). Bodies are decoded with the database's shared dict keys.
@@ -21,7 +21,7 @@ export function readCblDocs(db: Uint8Array, wal?: Uint8Array): CblDoc[] {
     if (typeof key !== "string" || typeof flags !== "number" || flags & DELETED || !(body instanceof Uint8Array) || !body.length) continue;
     const value = decodeFleece(body, sharedKeys as string[]);
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    docs.push({ id: key, sequence: Number(sequence), flags, body: value as Record<string, any> });
+    docs.push({ id: key, sequence: Number(sequence), flags, body: value as Record<string, unknown> });
   }
   return docs;
 }

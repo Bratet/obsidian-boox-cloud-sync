@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, BooxSettingTab } from "../src/settings";
 import { renderCloudPage } from "../src/handwriting";
 import fixture from "../src/__fixtures__/handwriting.json";
+window.createEl = tag => document.createElement(tag); // Obsidian global
 window.notices = [];
 const settings = structuredClone(DEFAULT_SETTINGS);
 const plugin = {
@@ -13,7 +14,7 @@ const plugin = {
   transport: async req => ({ status: 200, arrayBuffer: new ArrayBuffer(0), text: JSON.stringify(req.url.endsWith("users/me") ? { data: { uid: "synthetic", email: "test@example.com" } } : req.url.endsWith("signupByPhoneOrEmail") ? { data: { token: "synthetic-session" } } : { result_code: 0 }) }),
 };
 window.plugin = plugin;
-new BooxSettingTab({}, plugin).display();
+new BooxSettingTab({ vault: { configDir: ".obsidian" } }, plugin).display();
 const data = name => Uint8Array.from(atob(fixture[name]), c => c.charCodeAt(0)).buffer;
 window.renderFixture = async () => {
   const keys = ["u/note/n/point/L1#D#points", "u/note/n/shape/L1#S#1.zip", "u/note/n/pageModel/pb/P"];

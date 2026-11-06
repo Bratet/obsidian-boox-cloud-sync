@@ -35,7 +35,7 @@ describe("customization and safe sync", () => {
     expect(planSync(m, previous, { ...settings, highlightName: "{title} highlights" }, "now")[0]).toMatchObject({ path: "BOOX/Highlights/Book highlights.md" });
   });
   it("rejects path traversal and handles Windows reserved names", () => {
-    expect(() => safeFolder("../outside")).toThrow(); expect(() => safeFolder(".obsidian/plugins")).toThrow();
+    expect(() => safeFolder("../outside", ".obsidian")).toThrow(); expect(() => safeFolder(".obsidian/plugins", ".obsidian")).toThrow();
     expect(sanitizeName("CON")).toBe("_CON"); expect(sanitizeName(".. ")).toBe("Untitled");
   });
   it("does not overwrite or erase untracked vault files", async () => {

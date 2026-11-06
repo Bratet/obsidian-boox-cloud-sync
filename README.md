@@ -1,132 +1,161 @@
-# BOOX Sync
+# BOOX Notes Sync
 
-Sync a BOOX tablet's notes into an Obsidian vault, either from the BOOX / Onyx cloud or straight from the tablet itself. **No web app, companion server, Python installation, or backend API key is required.** Handwriting decoding, rendering, PDF creation, and file naming run inside the plugin. Sync is one-way: it does not change your tablet or BOOX cloud.
+Import the notebooks, calendar memos and book highlights from your BOOX (Onyx) e-ink tablet into your Obsidian vault. Handwriting becomes PDFs or PNG pages, highlights become Markdown notes. Everything is decoded and rendered inside the plugin: no companion app, server or API key.
 
-## What is imported
+Sync is one-way. The plugin never changes anything on your tablet or in your BOOX account.
 
-| Source | Default output |
+This is an independent project, not affiliated with Onyx International or BOOX.
+
+## What you get
+
+| BOOX content | Default location in the vault |
 | --- | --- |
-| Book highlights and annotations | `BOOX/Highlights/<Book>.md`, with quotes, notes, chapters and pages |
 | Notebooks | `BOOX/Notebooks/<device folders>/<Title>.pdf` |
 | Calendar memos | `BOOX/Calendar memo/<YYYYMMDD>.pdf` |
-| Cloud attachments | `BOOX/Files/<Filename>` |
+| Book highlights and annotations | `BOOX/Highlights/<Book>.md`, with quotes, notes, chapters and pages |
+| Attachments uploaded to the BOOX cloud (cloud source only) | `BOOX/Files/<Filename>` |
 
-Notebook folders, including empty folders, are preserved. Notebook and memo pages follow device order. Handwriting rendering handles pressure, colors, moved/resized strokes, erased strokes, cross-tile references, older page models, newer tile-based notebooks, and cropped infinite canvases. PDF pages embed lossless PNGs at 226 DPI. As with the previous backend, handwriting is rendered as images rather than searchable OCR; templates/backgrounds and every proprietary BOOX object type are not reproduced.
+Pages keep the device order, and notebooks keep their device folders, including empty ones. Rendering covers pen pressure, colors, moved, resized and erased strokes, and infinite canvases. PDF pages are lossless 226 DPI images. Handwriting is not converted to searchable text, and page templates and backgrounds are not drawn.
 
-## Install this version
+## Choose a source
 
-This is the standalone **0.4.0** source build; a release has not been published automatically.
+The plugin reads your notes from one of two places. Pick it under **Settings → BOOX Notes Sync → Read notes from**.
 
-1. Run `npm ci` and `npm run build` in this repository.
-2. Create `<your-vault>/.obsidian/plugins/boox-cloud-sync/`.
-3. Copy `main.js` and `manifest.json` there. No `styles.css` is needed.
-4. Enable BOOX Sync in Obsidian's Community plugins settings, or reload it after replacing the files.
+| | **This tablet** | **BOOX cloud** |
+| --- | --- | --- |
+| Where the plugin runs | Obsidian for Android on the BOOX tablet | Obsidian on any computer |
+| Account needed | None | BOOX account with cloud sync on |
+| Network use | None | BOOX servers and BOOX's Alibaba OSS storage |
+| Notes that never uploaded | Included | Missing |
+| Cloud attachments | Not available | Included |
+| Reaching your other devices | Through your vault sync (Obsidian Sync or similar) | Each device can sync on its own |
 
-Requires Obsidian 1.11.4 or newer: desktop for the BOOX cloud, or the Android app on the BOOX tablet for reading the tablet directly. The plugin inherits Obsidian's controls and theme.
+### This tablet
 
-## Read notes straight from the tablet
+**Pros**
+- Gets everything on the tablet. The BOOX cloud only has what the tablet managed to upload, and the BOOX calendar app silently skips some memos and never retries them.
+- No login, no network: your notes never leave the tablet except through your own vault sync.
+- Fresh as soon as you switch back to Obsidian.
 
-The BOOX cloud only has what the tablet managed to upload. Calendar memos in particular can stay on the tablet for good: the BOOX app marks a memo for upload when it is closed and never retries one it missed. Run the plugin in Obsidian **on the BOOX tablet** to read the BOOX apps' own files instead:
+**Cons**
+- Obsidian has to be installed and running on the BOOX tablet, with **All files access** granted.
+- BOOX's app freezing stops Obsidian, and the plugin with it, in the background.
+- No cloud attachments.
+- It reads the BOOX apps' private on-device databases. A BOOX firmware update can change their format. Tested on a Note Air5 C with firmware 4.2.1.
 
-1. Install Obsidian from the Play Store on the tablet and open the vault (Obsidian Sync or any other sync works).
-2. In Android settings, allow Obsidian **All files access**. The BOOX apps keep notes in the hidden `.ksync` folder of shared storage.
-3. Keep Obsidian out of BOOX's app freezing (**Settings → Apps & Notifications → Freeze Settings**). A frozen Obsidian neither syncs nor runs plugins.
-4. Install this plugin there. On Android it reads **This tablet** by default; **Settings → BOOX Sync → Read notes from** switches between the tablet and the BOOX cloud.
+### BOOX cloud
 
-Write in the BOOX Notes and Calendar apps as usual. The plugin reads the tablet's note databases and stroke files when Obsidian starts, every sync interval, and whenever Obsidian returns to the foreground. No BOOX login is needed, and notes that never reached the BOOX cloud are included. Attachments exist only in the cloud, so they are not synced in this mode. Run the plugin on one device per vault: if desktops also sync the same folder from the BOOX cloud, disable the plugin there.
+**Pros**
+- Runs on a computer. Nothing to install on the tablet.
+- Includes attachments you uploaded to the BOOX cloud.
 
-## Read notes from a Syncthing folder
+**Cons**
+- Needs a BOOX account, and BOOX cloud sync turned on on the tablet.
+- Only has what the tablet uploaded. Missed uploads, calendar memos in particular, never show up.
+- Uses BOOX's private cloud API, which BOOX can change without notice. BOOX also expires sessions from time to time, and you then sign in again with an email code.
 
-Desktop Obsidian can read the same tablet files without Obsidian running on the tablet. Syncthing keeps a copy of the tablet's `.ksync` folder on the computer, and the plugin reads that copy:
+## Install
 
-1. On the tablet, install Syncthing-Fork, allow it **All files access**, and keep it out of BOOX's app freezing (**Settings → Apps & Notifications → Freeze Settings**; BOOX's **Freeze new apps** freezes it otherwise). Share `/storage/emulated/0/.ksync` as a **Send Only** folder.
-2. On the computer (or on an always-on server that relays to it), add that folder as **Receive Only**.
-3. In **Settings → BOOX Sync → Read notes from**, choose **Syncthing folder** and enter the folder's absolute path. It contains `couch`, `document` and `point`.
+In Obsidian, open **Settings → Community plugins → Browse**, search for **BOOX Notes Sync**, then install and enable it.
 
-Syncs run on the plugin's interval, on startup, and with **Sync now**. Files Syncthing is still receiving (`.syncthing.*.tmp`) are ignored; a page whose stroke files have not arrived yet fails for that run and is retried on the next. As with the tablet source, no BOOX login is needed and attachments are not synced. Run one writer per sync folder: the tablet source, a Syncthing-folder desktop, or BOOX cloud — not several on the same vault folder.
+To install by hand, download `main.js` and `manifest.json` from the [latest release](https://github.com/Bratet/obsidian-boox-cloud-sync/releases/latest) into `<your vault>/.obsidian/plugins/boox-cloud-sync/`, then enable the plugin under **Community plugins**.
 
-## Connect directly to BOOX
+Requires Obsidian 1.11.4 or newer.
 
-1. Enable BOOX cloud sync on your tablet and let it finish uploading.
-2. Open **Settings → BOOX Sync → Connect**.
-3. Select the same region as the tablet: **Europe** or **Global**.
-4. Enter your BOOX account email, send a code, and enter the six-digit code.
-5. Select **Connect and sync**.
+## Set up: this tablet
 
-The connection is saved in your system keychain through Obsidian's secret storage, so sync resumes by itself after Obsidian restarts. There's no passphrase. Sync runs every 15 minutes by default while Obsidian is open; **Sync now** runs on demand, and `0` minutes disables scheduled runs. **Sync on startup** controls the run shortly after Obsidian opens.
+1. Install Obsidian from the Play Store on the BOOX tablet and open your vault.
+2. In Android settings, give Obsidian **All files access**. The BOOX apps keep notes in the hidden `.ksync` folder of the tablet's shared storage, outside the vault.
+3. In BOOX **Settings → Apps & Notifications → Freeze Settings**, keep Obsidian unfrozen.
+4. Install and enable this plugin. On Android, **This tablet** is the default source.
 
-Notebooks and memos whose cloud content hasn't changed are skipped without rendering. When an already-synced doc changes on the tablet, only that doc is re-rendered, and the sync notice names it.
+The plugin reads the tablet when Obsidian starts, every sync interval, and whenever Obsidian comes back to the foreground.
 
-**Disconnect** removes the saved connection from the keychain; it does not delete local exports or revoke other BOOX sessions. If BOOX expires the session, connect again with a new email code.
+Run it on the tablet only. If your vault sync also copies plugins and their settings to your computers (Obsidian Sync does), the plugin stays idle there and the exports arrive through vault sync. Don't change the source on a computer: the change syncs back to the tablet.
 
-Upgrading from 0.3.x, where the connection was locked with a passphrase: select **Finish upgrade** in settings and enter the old passphrase one last time. The connection then moves to the keychain.
+## Set up: BOOX cloud
 
-## Customize folders and filenames
+1. On the tablet, turn on BOOX cloud sync and let it finish uploading.
+2. Open **Settings → BOOX Notes Sync**, set **Read notes from** to **BOOX cloud**, and select **Connect**.
+3. Pick the region your tablet uses: **Europe** or **Global**.
+4. Enter your BOOX account email, select **Send code**, enter the six-digit code, then select **Connect and sync**.
 
-All category folders are relative to **Sync folder** and may include subfolders. Switch **Keep device folder hierarchy** off to flatten notebooks. Choose one bound **PDF** per notebook/memo or individual **PNG** pages.
+The session is kept in your system keychain through Obsidian's secret storage, so syncing resumes after a restart. **Disconnect** removes it; your exported files stay.
 
-File extensions are automatic. Filename templates support:
+## Syncing
 
-| Setting | Default | Available placeholders |
+- Sync runs every 15 minutes while Obsidian is open. Set **Sync interval** to `0` to turn this off.
+- **Sync on startup** runs a sync a few seconds after Obsidian opens.
+- The **Sync now** command and button run one immediately.
+- Unchanged notebooks and memos are skipped. When one changes, only that one is rendered again, and the sync notice names it.
+- Turn content types on or off: **Book highlights**, **Notebooks**, **Calendar memos**, **Attachments**.
+
+## Folders and file names
+
+Category folders are relative to **Sync folder** and can contain subfolders. Turn off **Keep device folder hierarchy** to put all notebooks in one folder. **Handwriting format** switches between one **PDF** per notebook or memo and individual **PNG** pages.
+
+File extensions are added automatically. Name templates:
+
+| Setting | Default | Placeholders |
 | --- | --- | --- |
 | Notebook name | `{title}` | `{title}`, `{id}`, `{date}` (last update, UTC) |
 | Highlights note name | `{title}` | `{title}`, `{id}` |
 | Memo name | `{date}` | `{date}`, `{id}`, `{title}` |
 | Attachment name | `{title}` | `{title}` without extension, `{id}`, `{ext}` |
 | PNG page name | `{title}_{page}` | `{title}`, `{id}`, `{page}` |
-| Date format | `YYYYMMDD` | `YYYY`, `MM`, `DD`; e.g. `YYYY-MM-DD` |
+| Date format | `YYYYMMDD` | `YYYY`, `MM`, `DD`, for example `YYYY-MM-DD` |
 
-For example, notebook name `{date} - {title}` and date format `YYYY-MM-DD` produce `2026-09-20 - Meeting notes.pdf`. A memo without cloud date metadata uses its ID until the date becomes available. A single-page PNG notebook uses its notebook name directly; multi-page notebooks use a folder containing the configured page names. PNG memos always use a folder.
+For example, notebook name `{date} - {title}` with date format `YYYY-MM-DD` gives `2026-09-20 - Meeting notes.pdf`. A one-page PNG notebook uses the notebook name directly; longer notebooks get a folder of pages. PNG memos always get a folder.
 
-Names are sanitized for Obsidian and Windows. Duplicate notebook/memo names receive an ID suffix; duplicate book and attachment names receive a stable hash suffix. Conflicting templates stop the sync with a message rather than overwrite a file. Include `{page}` in PNG page names.
+Names are made safe for every platform. Two notebooks or memos with the same name get an ID suffix, and two books or attachments with the same name get a short hash suffix. Templates that would make two items write the same file stop the sync with a message instead of overwriting.
 
-The **Highlight block template** can replace the default quote callouts using `{quote}`, `{note}`, `{chapter}`, `{page}`, and `{id}`. It is repeated for each highlight; the book title and BOOX frontmatter remain. Leave it empty to restore default formatting.
+**Highlight block template** replaces the default quote callouts. It uses `{quote}`, `{note}`, `{chapter}`, `{page}` and `{id}`, and is repeated for each highlight. Leave it empty for the default.
 
-Naming and export changes apply at the next sync. Previously managed, unchanged files move to the new paths. Changing the top-level **Sync folder** starts a separate mirror and keeps the old folder intact.
+Changes to names and formats apply at the next sync, and unchanged files move to their new paths. Changing **Sync folder** starts a new copy and leaves the old folder alone.
 
-## Local storage and privacy
+## Your files are safe
 
-In BOOX cloud mode, the plugin contacts the selected BOOX host (`eur.boox.com` or `push.boox.com`) and BOOX's Alibaba OSS storage endpoints over HTTPS. In tablet mode it makes no network requests: it only reads files on the tablet. It does not contact a companion service or send telemetry.
+- `<sync folder>/.boox-sync.json` records which files the plugin wrote, with checksums. A file you edited is never overwritten; the sync notice counts it as **kept**.
+- Files the plugin didn't write are never touched.
+- **Remove files deleted from BOOX** is off by default. When on, it only removes unchanged files the plugin wrote, and only removes folders once they're empty.
+- A sync folder already used for another BOOX account is refused.
+- Failed downloads, incomplete cloud listings and damaged handwriting stop that item instead of producing an empty or partial export. All pages of an item are ready before its file is replaced, and each finished item is recorded before the next one starts.
+- Vault sync doesn't copy `.boox-sync.json`, so a device syncing for the first time finds earlier exports it hasn't recorded. It takes over a PDF at an export path only if this plugin produced it (PDF producer `BOOX Sync`), and copies the original to `<sync folder>/.boox-sync-replaced/<time>/` first. Any other file at that path is kept and reported.
 
-The BOOX session token is stored in Obsidian's secret storage (the operating system keychain), never in `data.json`, so vault sync and backups don't copy it. Account email, account ID, and ordinary preferences are stored unencrypted in `data.json`. Secret storage does not isolate the session from other code running inside Obsidian.
+## Privacy and network use
 
-Temporary BOOX storage credentials and downloaded rendering blobs stay in memory for a sync run. Handwriting files download in batches of up to four; duplicate requests share one download. The raw blob cache is bounded at 32 MiB and evicts the least recently used entries. PDF pages are compressed as they are added so decoded images can be released before rendering the next page. Large PDFs still require memory proportional to their compressed embedded pages and the current page's working buffers.
+- **This tablet**: no network requests. The plugin reads the BOOX apps' files in the tablet's `.ksync` folder, outside the vault. That is why it needs Android's **All files access**.
+- **BOOX cloud**: the plugin talks to the BOOX server for your region (`eur.boox.com` or `push.boox.com`) to sign in and list your notes, and downloads note files from BOOX's Alibaba OSS storage. Nothing is sent anywhere else.
+- No telemetry, no third-party services.
+- The BOOX session token is kept in Obsidian's secret storage (your system keychain), never in the plugin's `data.json`, so vault sync and backups don't copy it. Your account email and ID, and the plugin's preferences, are stored in `data.json`. Other plugins running in Obsidian can read secret storage.
 
-## Safe updates and migration from 0.2.x
+## Development
 
-Old backend URL/API-key settings are removed on first load. **Sign in directly again.** Your old server and its stored credentials are not contacted or deleted by this plugin; retire that deployment separately if you no longer use it.
-
-An older direct-cloud build may have saved a plaintext `token`. On upgrade, the plugin immediately removes that field from disk and keeps the connection in memory for the current run. Use **Remember connection** to save it encrypted before closing Obsidian.
-
-The existing `<sync-folder>/.boox-sync.json` tracks managed files. Markdown exports are checked for edits; new binary exports also receive SHA-256 checksums. Edited files and unrelated files at a destination are kept. **Remove files deleted from BOOX** is off by default and only removes unchanged managed files. A tracked folder is removed only when empty. Sync refuses to reuse a folder recorded for another BOOX account.
-
-Obsidian Sync does not copy `.boox-sync.json`, so a device that syncs for the first time finds the vault's earlier exports untracked. An untracked PDF at a notebook or memo destination is replaced only when it looks like an earlier export: PDF Producer `BOOX Sync` (this plugin) or no Producer at all (its predecessor backend). Because a Producer-less PDF can also be your own file, the original is first copied to `<sync folder>/.boox-sync-replaced/<sync time>/` with the same relative path, and the sync notice reports how many were replaced. That folder is hidden from Obsidian and not copied by Obsidian Sync; restore from it with a file manager. Any other file at a destination, such as a PDF exported from the BOOX app or saved by a PDF editor, is kept and reported as **kept (edited or unverified)**.
-
-Old binary exports have no recorded checksum. When the plugin cannot prove they match, it reports them as **kept (edited or unverified)**. To migrate those, choose a new sync folder (the safest option), or move the old files you want to keep out of their managed locations and sync again. Do not delete the sync state as a conflict-resolution shortcut.
-
-Incomplete cloud listings, corrupt handwriting, and failed downloads stop the affected work instead of masquerading as deleted/empty content. Only pages positively identified as having no remaining ink are omitted from an export. All pages of an item are downloaded before its files are replaced. Completed items are checkpointed before the next item starts. If a later write fails, completed writes retain their checksums and the item remains pending, so retries can distinguish partial plugin output from user edits. Multi-file writes are not a filesystem transaction; abrupt termination during an item can still leave unrecorded files.
-
-## Development and verification
-
-Use Node.js 22 LTS (22.13 or newer) or 24 LTS for development; the SQLite reader tests use `node:sqlite`.
+Use Node.js 22.13 or newer; the SQLite reader tests use `node:sqlite`.
 
 ```sh
 npm ci
 npm run build       # type-check and bundle main.js
-npm test            # pure sync, protocol, rendering, naming, and credential tests
-npm run test:smoke  # browser settings/login harness + real Canvas PNG pixel checks
+npm test            # sync, protocol, rendering, naming and session tests
+npm run lint        # Obsidian's review rules (eslint-plugin-obsidianmd)
+npm run test:smoke  # settings and sign-in flow in a browser harness, plus real canvas rendering
 npm run dev         # watch build
 ```
 
-The smoke test uses installed Microsoft Edge by default; set `BOOX_TEST_BROWSER=chrome` to use Chrome. It uses synthetic account responses and a minimal Obsidian control harness, not a real Obsidian account. Screenshots are written to ignored `.vault-test/`.
+The smoke test uses Microsoft Edge by default. Set `BOOX_TEST_BROWSER=chrome` or `BOOX_TEST_BROWSER=chromium` to use another browser. It uses made-up account responses and a minimal stand-in for Obsidian. Screenshots go to the ignored `.vault-test/` folder.
 
-`src/__fixtures__/handwriting.json` was generated with the old backend's synthetic fixture builders, without user data. Tests cover page ordering, erased and transformed strokes, canvas bounds, PDF binding, paginated cloud reads, credential encryption, naming changes, and protection of local edits, including edits made while downloads are running.
+`src/__fixtures__/handwriting.json` is synthetic and contains no user data.
 
-Live checks on September 20, 2026 in desktop Obsidian 1.13.7 successfully read a BOOX account's inventory and processed all 74 available notebooks, memos and attachments: 68 exports/downloads succeeded and six empty items were skipped, with zero errors. These were read-only cloud/export checks; they did not replace the user's existing vault exports. The installed plugin's plaintext-session migration was also verified. Other BOOX devices and regions may behave differently, and BOOX's private cloud formats may change.
+Pushing a tag that equals the `manifest.json` version runs `.github/workflows/release.yml`, which tests, builds and publishes `main.js` and `manifest.json` as a GitHub release.
 
-Tablet mode was checked on October 27, 2026 against a Note Air5 C (firmware 4.2.1, Obsidian 1.12.7 for Android). The plugin's SQLite/WAL and Fleece readers matched SQLite's own row counts and sequences on all 46 Couchbase Lite databases on the device; every notebook and memo page parsed without errors; and the plugin, running in Obsidian on the tablet, exported memos that had never reached the BOOX cloud.
+### Tested with
 
-Protocol/rendering behavior was ported from `../boox-to-obsidian` (`boox_sync/` and `app/backend/manifest.py`, `render.py`). Storage signing follows [Alibaba OSS's documented signature format](https://www.alibabacloud.com/help/en/oss/include-signatures-in-the-authorization-header); local PDF binding uses [pdf-lib](https://pdf-lib.js.org/docs/api/classes/pdfdocument).
+- **BOOX cloud**: desktop Obsidian 1.13.7, September 20, 2026. All 74 notebooks, memos and attachments of a BOOX account were processed: 68 exported, 6 empty ones skipped, no errors.
+- **This tablet**: Note Air5 C, firmware 4.2.1, Obsidian 1.12.7 for Android, October 27, 2026. The plugin's database readers matched SQLite's own results on all 46 BOOX databases on the device, every page parsed, and memos that had never reached the BOOX cloud were exported.
+
+Other BOOX models, firmware versions and regions may behave differently.
+
+Storage requests are signed following [Alibaba OSS's signature format](https://www.alibabacloud.com/help/en/oss/include-signatures-in-the-authorization-header). PDFs are built with [pdf-lib](https://pdf-lib.js.org/).
 
 ## License
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  sanitizeName, highlightPath, filePath, parentFolder,
+  sanitizeName, safeFolder, highlightPath, filePath, parentFolder,
   folderChain, memoFolderName, memoImagePath, notebookDir, notebookImagePath,
   notebookSingleImagePath,
 } from "./paths";
@@ -9,12 +9,22 @@ describe("sanitizeName", () => {
   it("replaces illegal characters with spaces and collapses them", () => {
     expect(sanitizeName('a/b:c*d?"e<f>g|h')).toBe("a b c d e f g h");
   });
+  it("replaces control characters with spaces", () => {
+    expect(sanitizeName(`a${String.fromCharCode(0, 31)}b`)).toBe("a b");
+  });
   it("falls back to Untitled for empty/blank names", () => {
     expect(sanitizeName("")).toBe("Untitled");
     expect(sanitizeName("   ")).toBe("Untitled");
   });
   it("keeps dots so extensions survive", () => {
     expect(sanitizeName("My Book.pdf")).toBe("My Book.pdf");
+  });
+});
+
+describe("safeFolder", () => {
+  it("rejects the configured vault directory rather than a fixed name", () => {
+    expect(() => safeFolder("notes/.CONFIG/plugins", ".config")).toThrow();
+    expect(safeFolder(".obsidian/notes", ".config")).toBe(".obsidian/notes");
   });
 });
 

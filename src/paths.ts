@@ -12,15 +12,15 @@ export function foldPath(p: string): string {
 }
 
 export function sanitizeName(name: string): string {
-  let cleaned = (name || "").replace(ILLEGAL, " ").replace(/[\x00-\x1f]/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
+  let cleaned = [...(name || "")].map(c => c.charCodeAt(0) < 32 ? " " : c).join("").replace(ILLEGAL, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "");
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(cleaned)) cleaned = `_${cleaned}`;
   return cleaned.slice(0, 140) || "Untitled";
 }
 
-export function safeFolder(value: string): string {
+export function safeFolder(value: string, configDir: string): string {
   const parts = value.replace(/\\/g, "/").split("/");
-  if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || parts.some(p => p === "." || p === ".." || p.trim().toLowerCase() === ".obsidian"))
-    throw new Error("Use a vault-relative folder without dot segments or the .obsidian folder.");
+  if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || parts.some(p => p === "." || p === ".." || (configDir && p.trim().toLowerCase() === configDir.toLowerCase())))
+    throw new Error(`Use a vault-relative folder without dot segments or the ${configDir} folder.`);
   return parts.filter(Boolean).map(sanitizeName).join("/");
 }
 export function formatDate(date: string | null | undefined, pattern = "YYYYMMDD"): string {
@@ -30,7 +30,7 @@ export function formatDate(date: string | null | undefined, pattern = "YYYYMMDD"
 export function nameFromTemplate(pattern: string, values: Record<string, string | number>): string {
   const unknown = [...pattern.matchAll(/\{([^}]+)\}/g)].filter(m => !(m[1] in values));
   if (unknown.length) throw new Error(`Unknown filename placeholder: ${unknown[0][0]}`);
-  return sanitizeName(pattern.replace(/\{([^}]+)\}/g, (_, key) => String(values[key] ?? "")));
+  return sanitizeName(pattern.replace(/\{([^}]+)\}/g, (_: string, key: string) => String(values[key] ?? "")));
 }
 
 // Root→leaf directory names for a notebook's containing folder, sanitized for

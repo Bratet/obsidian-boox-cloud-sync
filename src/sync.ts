@@ -13,8 +13,7 @@ export interface AssetDownload {
 
 export type SyncAction =
   | { kind: "note"; itemKey: string; path: string; content: string; hash: string; assets: AssetDownload[] }
-  // bare images, no note; `modified` = newest cloud write (see adoptUnchangedLegacy)
-  | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[]; modified?: number | null }
+  | { kind: "images"; itemKey: string; hash: string; assets: AssetDownload[] }
   | { kind: "folder"; itemKey: string; path: string } // a device folder's directory, even when empty
   | { kind: "file"; itemKey: string; ossKey: string; path: string; size: number | null; hash: string }
   | { kind: "delete"; itemKey: string; path: string; assets: string[] };
@@ -33,12 +32,13 @@ export function planSync(
   prev: SyncState,
   settings: BooxSettings,
   syncedAt: string,
+  configDir = "",
 ): SyncAction[] {
   const actions: SyncAction[] = [];
   const seen = new Set<string>();
-  const folder = safeFolder(settings.syncFolder);
+  const folder = safeFolder(settings.syncFolder, configDir);
   if (!folder) throw new Error("Choose a non-empty sync folder.");
-  const category = (name: string, fallback: string) => `${folder}/${safeFolder(name || fallback)}`;
+  const category = (name: string, fallback: string) => `${folder}/${safeFolder(name || fallback, configDir)}`;
   const roots = {
     highlights: category(settings.highlightsFolder || "", "Highlights"),
     notebooks: category(settings.notebooksFolder || "", "Notebooks"),
@@ -53,7 +53,7 @@ export function planSync(
   });
   const pageName = (title: string, id: string, page: number) => nameFromTemplate(settings.pageName || "{title}_{page}", { title, id, page });
   const folders = settings.preserveFolders === false ? [] : manifest.folders;
-  const usePdf = (item: { pdf?: string | null }) => settings.exportFormat !== "png" && item.pdf;
+  const usePdf = settings.exportFormat !== "png";
   const shortId = (id: string, ids: string[]) => {
     let length = 8;
     while (length < id.length && ids.some(other => other !== id && other.slice(0, length) === id.slice(0, length))) length += 4;
@@ -81,21 +81,13 @@ export function planSync(
   }
 
   if (settings.syncNotebooks) {
-    // A notebook whose manifest entry carries a `pdf` ref syncs as ONE bound
-    // PDF directly in its device folder chain: <Title>.pdf. Older backends
-    // send no ref — those notebooks keep the bare-image layout: one folder per
-    // notebook, pages named <Title>_<n>.png in device order, single-page
-    // notebooks sitting directly in the chain as <Title>.png. Two notebooks
-    // landing on the same target (same title, same folder, same shape) get a
-    // short id suffix — deterministically, on every member of the colliding
-    // set. Targets are compared case-folded: the vault filesystem is
-    // case-insensitive, so `Ideas.pdf` and `ideas.pdf` are one file there.
-    // A file `T.png`/`T.pdf` and a folder `T/` coexist, so the shapes
-    // never collide with each other.
+    // PDF export writes one bound file; PNG export writes ordered pages.
+    // Colliding targets receive deterministic short id suffixes. Targets are
+    // compared case-folded for case-insensitive vaults.
     const naturalDir = (nb: (typeof manifest.notebooks)[number]) =>
       notebookDir(nbName(nb), folderChain(folders, nb.folderId));
     const targetOf = (nb: (typeof manifest.notebooks)[number]) =>
-      usePdf(nb) ? `${naturalDir(nb)}.pdf`
+      usePdf ? `${naturalDir(nb)}.pdf`
         : nb.images.length === 1 ? `${naturalDir(nb)}.png` : naturalDir(nb);
     const targetCount = new Map<string, number>();
     for (const nb of manifest.notebooks) {
@@ -112,8 +104,8 @@ export function planSync(
           folderChain(folders, nb.folderId));
       }
       const base = nbName(nb);
-      const assets: AssetDownload[] = usePdf(nb)
-        ? [{ ossKey: nb.pdf!, path: `${roots.notebooks}/${dir}.pdf` }]
+      const assets: AssetDownload[] = usePdf
+        ? [{ ossKey: nb.pdf, path: `${roots.notebooks}/${dir}.pdf` }]
         : nb.images.length === 1
         ? [{ ossKey: nb.images[0], path: `${roots.notebooks}/${dir}.png` }]
         : nb.images.map((ossKey, i) => ({
@@ -124,7 +116,7 @@ export function planSync(
       const prevItem = prev.items[key];
       if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
-      actions.push({ kind: "images", itemKey: key, hash, assets, modified: nb.modified ?? null });
+      actions.push({ kind: "images", itemKey: key, hash, assets });
     }
     // Device folders are items in their own right: a folder holding no
     // notebooks would otherwise never materialize (directories are only
@@ -140,16 +132,11 @@ export function planSync(
   }
 
   if (settings.syncMemos) {
-    // A memo whose manifest entry carries a `pdf` ref syncs as ONE bound PDF
-    // named by its calendar day, directly in Calendar memo/. Older backends
-    // send no ref — those memos keep the bare-image layout: one folder per
-    // memo, pages named <day>_<n>.png in device order. Two memos on the same
-    // day (shouldn't happen, but cloud data is messy) would collide on a
-    // target — every member of a colliding set gets a short id suffix. A file
-    // `D.pdf` and a folder `D/` coexist, so the shapes never collide.
+    // PDF export writes one file per day; PNG export writes ordered pages.
+    // Colliding targets receive deterministic short id suffixes.
     const targetOf = (m: (typeof manifest.memos)[number]) => {
       const d = memoName(m);
-      return usePdf(m) ? `${d}.pdf` : d;
+      return usePdf ? `${d}.pdf` : d;
     };
     const targetCount = new Map<string, number>();
     for (const m of manifest.memos) {
@@ -162,8 +149,8 @@ export function planSync(
       const hash = hashMemo(m);
       const base = memoName(m);
       const dir = (targetCount.get(foldPath(targetOf(m))) ?? 0) > 1 ? `${base} (${shortId(m.id, manifest.memos.map(n => n.id))})` : base;
-      const assets: AssetDownload[] = usePdf(m)
-        ? [{ ossKey: m.pdf!, path: `${roots.memos}/${dir}.pdf` }]
+      const assets: AssetDownload[] = usePdf
+        ? [{ ossKey: m.pdf, path: `${roots.memos}/${dir}.pdf` }]
         : m.images.map((ossKey, i) => ({
             ossKey, path: `${roots.memos}/${dir}/${pageName(base, m.id, i + 1)}.png`,
           }));
@@ -172,7 +159,7 @@ export function planSync(
       const prevItem = prev.items[key];
       if (!prevItem?.pending && prevItem?.hash === hash &&
           (prevItem.assets ?? []).join("\n") === assets.map((a) => a.path).join("\n")) continue;
-      actions.push({ kind: "images", itemKey: key, hash, assets, modified: m.modified ?? null });
+      actions.push({ kind: "images", itemKey: key, hash, assets });
     }
   }
 
@@ -244,7 +231,6 @@ export interface SyncSummary {
   skippedUserEdited: string[];
   errors: { itemKey: string; message: string }[];
   updated: string[]; // already-synced notebooks/memos re-rendered with new content (first path of each)
-  adopted: number; // pre-checksum items confirmed unchanged from timestamps, without re-rendering
   backedUp: string[]; // untracked files copied to the backup folder before being replaced
 }
 
@@ -259,7 +245,7 @@ export async function executeSync(
   backupPath?: (path: string) => string,
 ): Promise<{ state: SyncState; summary: SyncSummary }> {
   const items: Record<string, SyncItem> = { ...prev.items };
-  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [], updated: [], adopted: 0, backedUp: [] };
+  const summary: SyncSummary = { written: 0, downloaded: 0, deleted: 0, skippedUserEdited: [], errors: [], updated: [], backedUp: [] };
 
   // Every path the previous state tracked, keyed by case-fold — regardless of
   // which item owned it. A write landing on a case-variant of any old file
@@ -274,9 +260,7 @@ export async function executeSync(
 
   // Removing the last file from a folder leaves an empty directory in the
   // vault; sweep those best-effort (rmdir throws on non-empty — that's fine)
-  // and climb while parents keep emptying, so shells like a drained _assets/
-  // vanish too. The climb stops at the sync root: its .boox-sync.json state
-  // file keeps it non-empty.
+  // and climb while parents keep emptying. The sync root contains the state file.
   const rmdirIfEmpty = async (dir: string) => {
     if (!dir || !io.rmdir) return;
     try { await io.rmdir(dir); } catch { return; /* not empty or already gone */ }
@@ -301,47 +285,12 @@ export async function executeSync(
     if (a.kind === "delete" || a.kind === "folder") continue;
     for (const path of a.kind === "images" ? a.assets.map(x => x.path) : [a.path, ...(a.kind === "note" ? a.assets.map(x => x.path) : [])]) claimed.set(foldPath(path), a.itemKey);
   }
-  // A device syncing for the first time has no state entry for files already
-  // in the vault (Obsidian Sync does not carry .boox-sync.json). An untracked
-  // PDF at a notebook/memo destination that looks like this plugin's or its
-  // predecessor's export (Producer "BOOX Sync", or none) is taken over — but
-  // only when the caller provides `backupPath`: the original is copied there
-  // first, because a Producer-less PDF can also be the user's own file. Any
-  // other file at a destination is kept.
+  // On first sync, take over an untracked PDF produced by this plugin only
+  // when backupPath is provided, preserving the original before replacement.
   const adoptable = async (a: SyncAction, path: string) => !!backupPath && a.kind === "images" && !owners.has(foldPath(path))
     && /\.pdf$/i.test(path) && !!io.readBinary && await isGeneratedPdf(await io.readBinary(path));
-  // Items synced before per-file checksums existed carry a source hash from
-  // the old backend: every one of them looks changed now, and re-rendering
-  // them all on every run is slow and never settles. When none of an item's
-  // cloud objects was written after its vault files were, the doc is
-  // unchanged: adopt the files as they are, recording the new source hash and
-  // their checksums, so only genuinely edited docs are re-rendered.
-  const adopted = new Set<string>();
-  if (io.mtime && io.readBinary) for (const a of actions) {
-    if (a.kind !== "images" || a.modified == null) continue;
-    const old = prev.items[a.itemKey];
-    const paths = a.assets.map(x => x.path);
-    if (!old || old.pending || old.path || (old.assets ?? []).join("\n") !== paths.join("\n")) continue;
-    if (paths.some(p => old.binaryHashes?.[p])) continue; // has a baseline: the normal path handles it
-    const missing = new Set(old.missing ?? []);
-    try {
-      const binaryHashes: Record<string, string> = {};
-      let fresh = true;
-      for (const path of paths) {
-        if (!(await io.exists(path))) { if (missing.has(path)) continue; fresh = false; break; }
-        const mtime = await io.mtime(path);
-        if (mtime == null || mtime < a.modified) { fresh = false; break; }
-        binaryHashes[path] = await binaryHash(await io.readBinary(path));
-      }
-      if (!fresh) continue;
-      items[a.itemKey] = { hash: a.hash, path: "", binaryHashes, assets: paths, ...(old.missing?.length ? { missing: old.missing } : {}) };
-      adopted.add(a.itemKey); summary.adopted++;
-    } catch { /* unreadable: fall through to a normal re-render */ }
-  }
-  if (adopted.size && checkpoint) await checkpoint({ ...prev, items: { ...items } });
 
   for (const a of actions) {
-    if (adopted.has(a.itemKey)) continue;
     const before = items[a.itemKey];
     // Untracked destinations this action takes over; backed up before writing.
     const takeover = new Set<string>();
@@ -390,8 +339,8 @@ export async function executeSync(
           else throw e;
         }
       }
-      // Legacy binary exports have no baseline. Adopt identical bytes, but keep
-      // differing files rather than guessing whether the user annotated them.
+      // Without a binary baseline, keep differing files rather than guessing
+      // whether the user edited them.
       if (io.readBinary && old) for (const path of previousPaths) {
         if ((path === old.path && old.written) || a.kind === "folder" || a.itemKey.startsWith("folder:") || old.binaryHashes?.[path] || !await io.exists(path)) continue;
         // A rendered notebook/memo file listed in this item's own state was
@@ -483,14 +432,6 @@ export async function executeSync(
         summary.written++;
       } else if (a.kind === "images") {
         const prevItem = prev.items[a.itemKey];
-        // Migration off the note layout: if the user edited the old .md since we
-        // wrote it, keep it — and the assets it embeds — instead of deleting their
-        // work. The new image layout is still written and becomes the managed state.
-        let keepOldNote = false;
-        if (prevItem?.written && prevItem.path && (await io.exists(prevItem.path))) {
-          keepOldNote = hashString(await io.read(prevItem.path)) !== prevItem.written;
-          if (keepOldNote) summary.skippedUserEdited.push(prevItem.path);
-        }
         const emptied = new Set<string>();
         const missing: string[] = [];
         for (const asset of a.assets) {
@@ -512,7 +453,7 @@ export async function executeSync(
           // old directory entry just before writing so the file takes the
           // new-case name instead of silently keeping the old one.
           const oldCase = prevPathByFold.get(foldPath(asset.path));
-          if (!keepOldNote && oldCase !== undefined && oldCase !== asset.path && (await io.exists(oldCase))) {
+          if (oldCase !== undefined && oldCase !== asset.path && (await io.exists(oldCase))) {
             await io.remove(oldCase);
           }
           await io.writeBinary(asset.path, bytes);
@@ -520,21 +461,14 @@ export async function executeSync(
           summary.downloaded++;
         }
         // GC assets that fell out of the set — deleted pages, or the whole
-        // item moving folders (rename, collision suffix, old layout). Compared
+        // item moving folders (rename or collision suffix). Compared
         // case-folded so a case-variant of a freshly written asset is
         // recognized as that same file and kept.
         const newAssetPaths = new Set(a.assets.map((x) => foldPath(x.path)));
-        if (!keepOldNote) {
-          for (const oldAssetPath of (prevItem?.assets ?? [])) {
-            if (!newAssetPaths.has(foldPath(oldAssetPath)) && (await io.exists(oldAssetPath))) {
-              await io.remove(oldAssetPath);
-              emptied.add(parentFolder(oldAssetPath));
-            }
-          }
-          // Migration from the note layout: the .md this item used to be.
-          if (prevItem?.path && !newAssetPaths.has(foldPath(prevItem.path)) && (await io.exists(prevItem.path))) {
-            await io.remove(prevItem.path);
-            emptied.add(parentFolder(prevItem.path));
+        for (const oldAssetPath of (prevItem?.assets ?? [])) {
+          if (!newAssetPaths.has(foldPath(oldAssetPath)) && (await io.exists(oldAssetPath))) {
+            await io.remove(oldAssetPath);
+            emptied.add(parentFolder(oldAssetPath));
           }
         }
         for (const dir of emptied) await rmdirIfEmpty(dir);
@@ -577,8 +511,8 @@ export async function executeSync(
         delete items[a.itemKey];
         summary.deleted++;
       }
-    } catch (e: any) {
-      summary.errors.push({ itemKey: a.itemKey, message: e?.message || String(e) });
+    } catch (e: unknown) {
+      summary.errors.push({ itemKey: a.itemKey, message: e instanceof Error ? e.message : String(e) });
     }
     // Persist completed items before starting another potentially slow render.
     // A checkpoint failure must stop the run; continuing would lose ownership.

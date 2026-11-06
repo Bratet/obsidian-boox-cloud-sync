@@ -1,4 +1,3 @@
-import type { EncryptedSession } from "./credentials";
 // Normalized inventory built locally from BOOX cloud documents.
 export interface Highlight {
   id: string;
@@ -20,7 +19,7 @@ export interface Notebook {
   folderId?: string | null; // containing device folder; null/absent = root
   sig?: string | null; // content signature of the item's cloud objects — stroke
   // edits change it even when the page refs stay identical
-  pdf?: string | null; // local renderer reference (`pdf:<id>`)
+  pdf: string; // local renderer reference (`pdf:<id>`)
   modified?: number | null; // newest cloud write to any of its objects (ms since epoch)
 }
 
@@ -37,7 +36,7 @@ export interface Memo {
   images: string[];
   date?: string | null; // calendar day (ISO YYYY-MM-DD); null until the memo's doc mirrors
   sig?: string | null; // content signature — see Notebook.sig
-  pdf?: string | null; // local renderer reference (`pdf:<id>`)
+  pdf: string; // local renderer reference (`pdf:<id>`)
   modified?: number | null; // see Notebook.modified
 }
 
@@ -84,11 +83,8 @@ export interface SyncState {
 // Plugin settings, persisted in .obsidian/plugins/boox-cloud-sync/data.json
 export interface BooxSettings {
   // "cloud" reads the BOOX cloud; "tablet" reads the BOOX files of the
-  // Android tablet Obsidian runs on; "folder" reads a copy of the tablet's
-  // .ksync folder (kept current by Syncthing) at `folderPath` on a desktop.
-  source?: "cloud" | "tablet" | "folder";
-  folderPath?: string;
-  encryptedSession?: EncryptedSession | null;
+  // Android tablet Obsidian runs on.
+  source?: "cloud" | "tablet";
   region?: string;
   account: { uid: string | null; email: string | null } | null;
   syncFolder: string;

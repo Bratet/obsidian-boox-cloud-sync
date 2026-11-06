@@ -95,7 +95,7 @@ describe("executeSync on a case-insensitive vault", () => {
       { path: "BOOX/a.png", ossKey: "a" }, { path: "BOOX/b.png", ossKey: "b" },
     ] };
     const initial = await executeSync([original], emptyState(), io, fetcher);
-    const write = io.writeBinary;
+    const write = io.writeBinary.bind(io);
     io.writeBinary = async (path, bytes) => { if (path === "BOOX/B.png") throw new Error("disk full"); await write(path, bytes); };
     const update: SyncAction = { ...original, hash: "new", assets: [
       { path: "BOOX/A.png", ossKey: "a" }, { path: "BOOX/B.png", ossKey: "b" },

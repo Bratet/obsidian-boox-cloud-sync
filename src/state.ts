@@ -8,14 +8,16 @@ export function emptyState(): SyncState {
 
 export function parseState(raw: string): SyncState {
   try {
-    const j = JSON.parse(raw);
-    if (!j || typeof j !== "object" || typeof j.items !== "object" || j.items === null) {
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") return emptyState();
+    const j = value as Record<string, unknown>;
+    if (typeof j.items !== "object" || j.items === null) {
       return emptyState();
     }
     return {
       version: SYNC_STATE_VERSION,
       lastSync: typeof j.lastSync === "string" ? j.lastSync : null,
-      items: j.items,
+      items: j.items as SyncState["items"],
       ...(typeof j.accountUid === "string" ? { accountUid: j.accountUid } : {}),
     };
   } catch {

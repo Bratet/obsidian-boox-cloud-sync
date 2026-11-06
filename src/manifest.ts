@@ -2,7 +2,19 @@ import type { Manifest } from "./types";
 import { hashString } from "./hash";
 
 export interface CloudObject { key: string; size: number; etag?: string; modified?: string }
-export type CloudDoc = Record<string, any>;
+export interface CloudDoc {
+  _id?: string; _deleted?: boolean; uniqueId?: string; status?: number; title?: string;
+  associateDate?: string | number; type?: number; parentUniqueId?: string;
+  pageNameList?: { pageNameList?: string[] }; activeScene?: number; updatedAt?: number;
+  content?: string; name?: string; documentId?: string; quote?: string; note?: string;
+  chapter?: string; pageNumber?: number;
+}
+interface MessageContent {
+  formats?: string[];
+  storage?: Record<string, { oss?: { key?: string; bucket?: string } }>;
+  name?: string;
+  size?: number;
+}
 export interface Snapshot { notes: CloudDoc[]; library: CloudDoc[]; messages: CloudDoc[]; calendar: CloudDoc[] }
 
 // Port of the companion's assemble_sources, including device page order and recycle-bin semantics.
@@ -22,7 +34,7 @@ export function assembleSources(uid: string, docs: Snapshot, objects: CloudObjec
     groups.set(`${kind}/${id}`, group);
   }
   const result: Manifest = { account: { uid }, folders: live.filter(d => d.title && d.type === 0 && !("commitId" in d) && !("modeType" in d))
-    .map(d => ({ id: d.uniqueId, title: d.title, parentId: d.parentUniqueId || null })), notebooks: [], memos: [], files: [], highlights: [] };
+    .map(d => ({ id: d.uniqueId!, title: d.title!, parentId: d.parentUniqueId || null })), notebooks: [], memos: [], files: [], highlights: [] };
   for (const { id, kind, objects: objs } of groups.values()) {
     const d = (kind === "note" ? meta.get(id) : calendar.get(id)) ?? {};
     const pnl: string[] = d.pageNameList?.pageNameList ?? [];
@@ -58,14 +70,15 @@ export function assembleSources(uid: string, docs: Snapshot, objects: CloudObjec
   }
   for (const d of docs.messages) {
     if (d._deleted || d.status === 0 || typeof d.content !== "string") continue;
-    let c; try { c = JSON.parse(d.content); } catch { continue; }
-    const fmt = c.formats?.[0]; const oss = c.storage?.[fmt]?.oss;
-    if (oss?.key) result.files.push({ name: c.name || oss.key.split("/").pop(), size: c.size ?? null, fmt,
+    let value: unknown; try { value = JSON.parse(d.content); } catch { continue; }
+    const c = value as MessageContent;
+    const fmt = c.formats?.[0] as string; const oss = c.storage?.[fmt]?.oss;
+    if (oss?.key) result.files.push({ name: (c.name || oss.key.split("/").pop())!, size: c.size ?? null, fmt,
       key: oss.key, bucket: oss.bucket || "onyx-cloud", sig: objects.find(o => o.key === oss.key)?.etag });
   }
   const books = new Map(docs.library.filter(d => d.name).map(d => [d.uniqueId, d.name]));
   result.highlights = docs.library.filter(d => !d._deleted && d.status !== 0 && (d.quote || d.note)).map(d => ({
-    id: d.uniqueId || d._id, bookId: d.documentId || d.uniqueId || d._id, book: books.get(d.documentId) || "Book",
+    id: (d.uniqueId || d._id)!, bookId: (d.documentId || d.uniqueId || d._id)!, book: books.get(d.documentId) || "Book",
     quote: d.quote || "", note: d.note || "", chapter: d.chapter || "", page: d.pageNumber ?? null,
   }));
   result.notebooks.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));

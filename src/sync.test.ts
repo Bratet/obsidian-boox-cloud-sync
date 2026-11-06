@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { planSync } from "./sync";
-import { hashString } from "./hash";
 import type { Manifest, SyncState, BooxSettings } from "./types";
 import { emptyState, bookKey, notebookKey, memoKey } from "./state";
 
@@ -8,13 +7,19 @@ const SYNC = "2026-06-30T00:00:00.000Z";
 
 const settings = (over: Partial<BooxSettings> = {}): BooxSettings => ({
   account: null, syncFolder: "BOOX", intervalMinutes: 30,
-  syncHighlights: true, syncNotebooks: true, syncMemos: true, syncFiles: true, deleteRemoved: false, ...over,
+  syncHighlights: true, syncNotebooks: true, syncMemos: true, syncFiles: true, deleteRemoved: false, exportFormat: "png", ...over,
 });
 
-const manifest = (over: Partial<Manifest> = {}): Manifest => ({
-  account: { uid: "u1" }, notebooks: [], memos: [], files: [],
+type FixtureManifest = Omit<Partial<Manifest>, "notebooks" | "memos"> & {
+  notebooks?: (Omit<Manifest["notebooks"][number], "pdf"> & { pdf?: string })[];
+  memos?: (Omit<Manifest["memos"][number], "pdf"> & { pdf?: string })[];
+};
+const manifest = (over: FixtureManifest = {}): Manifest => ({
+  account: { uid: "u1" }, files: [],
   highlights: [{ id: "h1", bookId: "b1", book: "My Book", quote: "q", note: "", chapter: "", page: 1 }],
   ...over,
+  notebooks: (over.notebooks ?? []).map(n => ({ ...n, pdf: n.pdf ?? `pdf:${n.id}` })),
+  memos: (over.memos ?? []).map(m => ({ ...m, pdf: m.pdf ?? `pdf:${m.id}` })),
 });
 
 describe("planSync", () => {
@@ -28,7 +33,8 @@ describe("planSync", () => {
   it("skips an unchanged book (prev hash matches)", () => {
     const first = planSync(manifest(), emptyState(), settings(), SYNC);
     const note = first[0];
-    const prev: SyncState = { version: 1, lastSync: null, items: { [note.itemKey]: { hash: (note as any).hash, path: (note as any).path } } };
+    if (note.kind !== "note") throw new Error("Expected a note");
+    const prev: SyncState = { version: 1, lastSync: null, items: { [note.itemKey]: { hash: note.hash, path: note.path } } };
     expect(planSync(manifest(), prev, settings(), SYNC)).toHaveLength(0);
   });
 
@@ -63,38 +69,6 @@ describe("planSync", () => {
     expect(file && file.kind === "file" && file.path).toBe("BOOX/Files/p.pdf");
   });
 
-  it("re-syncs notebooks stored under the previous note layout (migration)", () => {
-    // A vault synced before notebooks became bare image folders holds items keyed
-    // by the OLD hash formula (v2 note + _assets layout). The layout bump must make
-    // planSync re-emit so pages land in the new folder and the .md + assets get GC'd.
-    const oldNotebookHash = hashString("v2|T|5|1|render:n1/pA"); // pre-bump hashNotebook formula
-    const m = manifest({
-      highlights: [],
-      notebooks: [{ id: "n1", pages: 1, previewKey: "uid/note/n1/n1.png", images: ["render:n1/pA"], title: "T", updatedAt: 5 }],
-    });
-    const prev: SyncState = {
-      version: 1, lastSync: null,
-      items: {
-        [notebookKey("n1")]: { hash: oldNotebookHash, path: "BOOX/Notebooks/T.md", assets: ["BOOX/_assets/n1/pA.png"] },
-      },
-    };
-    const a = planSync(m, prev, settings(), SYNC);
-    expect(a.find((x) => x.itemKey === notebookKey("n1"))?.kind).toBe("images");
-  });
-
-  it("re-syncs memos stored under the previous asset layout (migration)", () => {
-    const oldMemoHash = hashString("m1|1|render:m1/0"); // pre-bump hashMemo formula
-    const m = manifest({
-      highlights: [],
-      memos: [{ id: "m1", pages: 1, images: ["render:m1/0"] }],
-    });
-    const prev: SyncState = {
-      version: 1, lastSync: null,
-      items: { [memoKey("m1")]: { hash: oldMemoHash, path: "BOOX/Memos/m1.md" } },
-    };
-    const a = planSync(m, prev, settings(), SYNC);
-    expect(a.find((x) => x.itemKey === memoKey("m1"))?.kind).toBe("images");
-  });
 
   it("skips an unchanged notebook (hash and image paths match)", () => {
     const m = manifest({
@@ -103,12 +77,13 @@ describe("planSync", () => {
     });
     const first = planSync(m, emptyState(), settings(), SYNC);
     const nb = first.find((x) => x.itemKey === notebookKey("n1"));
+    if (nb?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [notebookKey("n1")]: {
-          hash: (nb as any).hash, path: "",
-          assets: (nb as any).assets.map((x: any) => x.path),
+          hash: nb.hash, path: "",
+          assets: nb.assets.map((x) => x.path),
         },
       },
     };
@@ -162,12 +137,13 @@ describe("planSync", () => {
     });
     const first = planSync(m, emptyState(), settings(), SYNC);
     const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    if (memo?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [memoKey("m1")]: {
-          hash: (memo as any).hash, path: "",
-          assets: (memo as any).assets.map((x: any) => x.path),
+          hash: memo.hash, path: "",
+          assets: memo.assets.map((x) => x.path),
         },
       },
     };
@@ -180,12 +156,13 @@ describe("planSync", () => {
     const undated = manifest({ highlights: [], memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: null }] });
     const first = planSync(undated, emptyState(), settings(), SYNC);
     const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    if (memo?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [memoKey("m1")]: {
-          hash: (memo as any).hash, path: "",
-          assets: (memo as any).assets.map((x: any) => x.path),
+          hash: memo.hash, path: "",
+          assets: memo.assets.map((x) => x.path),
         },
       },
     };
@@ -204,7 +181,7 @@ describe("planSync", () => {
         { id: "m9", pages: 1, images: ["render:m9/l"], date: null, pdf: "pdf:m9" },
       ],
     });
-    const a = planSync(m, emptyState(), settings(), SYNC);
+    const a = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const assets = (id: string) => {
       const x = a.find((y) => y.itemKey === memoKey(id));
       return x && x.kind === "images" ? x.assets.map((z) => ({ ossKey: z.ossKey, path: z.path })) : null;
@@ -218,7 +195,7 @@ describe("planSync", () => {
   it("same-day memos get id suffixes on their PDFs", () => {
     const memo = (id: string) => ({ id, pages: 1, images: [`render:${id}/l`], date: "2026-06-11", pdf: `pdf:${id}` });
     const m = manifest({ highlights: [], memos: [memo("aaaa1111bbbb"), memo("cccc2222dddd")] });
-    const a = planSync(m, emptyState(), settings(), SYNC);
+    const a = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const path = (id: string) => {
       const x = a.find((y) => y.itemKey === memoKey(id));
       return x && x.kind === "images" ? x.assets[0].path : null;
@@ -227,23 +204,24 @@ describe("planSync", () => {
     expect(path("cccc2222dddd")).toBe("BOOX/Calendar memo/20260611 (cccc2222).pdf");
   });
 
-  it("re-emits a memo when the backend starts serving PDFs (paths move)", () => {
+  it("re-emits a memo when export format changes to PDF", () => {
     // Same strokes: the target moves from the image folder to <day>.pdf —
     // the plan must emit so the PDF lands and the page images get GC'd.
     const memo = { id: "m1", pages: 2, images: ["render:m1/layA", "render:m1/layB"], date: "2026-06-11" };
     const before = planSync(manifest({ highlights: [], memos: [memo] }), emptyState(), settings(), SYNC);
     const prevItem = before.find((x) => x.itemKey === memoKey("m1"));
+    if (prevItem?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [memoKey("m1")]: {
-          hash: (prevItem as any).hash, path: "",
-          assets: (prevItem as any).assets.map((x: any) => x.path),
+          hash: prevItem.hash, path: "",
+          assets: prevItem.assets.map((x) => x.path),
         },
       },
     };
     const after = planSync(
-      manifest({ highlights: [], memos: [{ ...memo, pdf: "pdf:m1" }] }), prev, settings(), SYNC);
+      manifest({ highlights: [], memos: [memo] }), prev, settings({ exportFormat: "pdf" }), SYNC);
     const moved = after.find((x) => x.itemKey === memoKey("m1"));
     expect(moved && moved.kind === "images" && moved.assets.map((x) => x.path))
       .toEqual(["BOOX/Calendar memo/20260611.pdf"]);
@@ -254,18 +232,19 @@ describe("planSync", () => {
       highlights: [],
       memos: [{ id: "m1", pages: 1, images: ["render:m1/l"], date: "2026-06-11", pdf: "pdf:m1" }],
     });
-    const first = planSync(m, emptyState(), settings(), SYNC);
+    const first = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const memo = first.find((x) => x.itemKey === memoKey("m1"));
+    if (memo?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [memoKey("m1")]: {
-          hash: (memo as any).hash, path: "",
-          assets: (memo as any).assets.map((x: any) => x.path),
+          hash: memo.hash, path: "",
+          assets: memo.assets.map((x) => x.path),
         },
       },
     };
-    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+    expect(planSync(m, prev, settings({ exportFormat: "pdf" }), SYNC)).toHaveLength(0);
   });
 
   it("skips a file unchanged by size", () => {
@@ -331,12 +310,13 @@ describe("planSync", () => {
     });
     const first = planSync(one, emptyState(), settings(), SYNC);
     const nb = first.find((x) => x.itemKey === notebookKey("n1"));
+    if (nb?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [notebookKey("n1")]: {
-          hash: (nb as any).hash, path: "",
-          assets: (nb as any).assets.map((x: any) => x.path),
+          hash: nb.hash, path: "",
+          assets: nb.assets.map((x) => x.path),
         },
       },
     };
@@ -379,12 +359,13 @@ describe("planSync", () => {
       manifest({ highlights: [], notebooks: [{ ...nb, folderId: null }] }),
       emptyState(), settings(), SYNC);
     const prevItem = before.find((x) => x.itemKey === notebookKey("n1"));
+    if (prevItem?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [notebookKey("n1")]: {
-          hash: (prevItem as any).hash, path: "",
-          assets: (prevItem as any).assets.map((x: any) => x.path),
+          hash: prevItem.hash, path: "",
+          assets: prevItem.assets.map((x) => x.path),
         },
       },
     };
@@ -409,7 +390,7 @@ describe("planSync", () => {
         { id: "n2", pages: 1, previewKey: null, images: ["render:n2/p"], title: "Loose", updatedAt: 1, folderId: null, pdf: "pdf:n2" },
       ],
     });
-    const a = planSync(m, emptyState(), settings(), SYNC);
+    const a = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const assets = (id: string) => {
       const x = a.find((y) => y.itemKey === notebookKey(id));
       return x && x.kind === "images" ? x.assets.map((z) => ({ ossKey: z.ossKey, path: z.path })) : null;
@@ -425,7 +406,7 @@ describe("planSync", () => {
       title: "Notebook-1", updatedAt: 1, folderId: null, pdf: `pdf:${id}`,
     });
     const m = manifest({ highlights: [], notebooks: [nb("aaaa1111bbbb"), nb("cccc2222dddd")] });
-    const a = planSync(m, emptyState(), settings(), SYNC);
+    const a = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const path = (id: string) => {
       const x = a.find((y) => y.itemKey === notebookKey(id));
       return x && x.kind === "images" ? x.assets[0].path : null;
@@ -434,23 +415,24 @@ describe("planSync", () => {
     expect(path("cccc2222dddd")).toBe("BOOX/Notebooks/Notebook-1 (cccc2222).pdf");
   });
 
-  it("re-emits a notebook when the backend starts serving PDFs (paths move)", () => {
+  it("re-emits a notebook when export format changes to PDF", () => {
     // Same content: the hash may or may not move, but the target paths do —
     // the plan must emit so the PDF lands and the page images get GC'd.
     const nb = { id: "n1", pages: 2, previewKey: null, images: ["render:n1/pA", "render:n1/pB"], title: "J", updatedAt: 1 };
     const before = planSync(manifest({ highlights: [], notebooks: [nb] }), emptyState(), settings(), SYNC);
     const prevItem = before.find((x) => x.itemKey === notebookKey("n1"));
+    if (prevItem?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [notebookKey("n1")]: {
-          hash: (prevItem as any).hash, path: "",
-          assets: (prevItem as any).assets.map((x: any) => x.path),
+          hash: prevItem.hash, path: "",
+          assets: prevItem.assets.map((x) => x.path),
         },
       },
     };
     const after = planSync(
-      manifest({ highlights: [], notebooks: [{ ...nb, pdf: "pdf:n1" }] }), prev, settings(), SYNC);
+      manifest({ highlights: [], notebooks: [nb] }), prev, settings({ exportFormat: "pdf" }), SYNC);
     const moved = after.find((x) => x.itemKey === notebookKey("n1"));
     expect(moved && moved.kind === "images" && moved.assets.map((x) => x.path))
       .toEqual(["BOOX/Notebooks/J.pdf"]);
@@ -461,18 +443,19 @@ describe("planSync", () => {
       highlights: [],
       notebooks: [{ id: "n1", pages: 1, previewKey: null, images: ["render:n1/p"], title: "J", updatedAt: 1, pdf: "pdf:n1" }],
     });
-    const first = planSync(m, emptyState(), settings(), SYNC);
+    const first = planSync(m, emptyState(), settings({ exportFormat: "pdf" }), SYNC);
     const nb = first.find((x) => x.itemKey === notebookKey("n1"));
+    if (nb?.kind !== "images") throw new Error("Expected images");
     const prev: SyncState = {
       version: 1, lastSync: null,
       items: {
         [notebookKey("n1")]: {
-          hash: (nb as any).hash, path: "",
-          assets: (nb as any).assets.map((x: any) => x.path),
+          hash: nb.hash, path: "",
+          assets: nb.assets.map((x) => x.path),
         },
       },
     };
-    expect(planSync(m, prev, settings(), SYNC)).toHaveLength(0);
+    expect(planSync(m, prev, settings({ exportFormat: "pdf" }), SYNC)).toHaveLength(0);
   });
 
   it("emits folder actions so empty device folders exist in the vault", () => {

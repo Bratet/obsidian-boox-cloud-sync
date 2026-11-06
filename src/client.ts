@@ -1,6 +1,6 @@
 import type { Manifest } from "./types";
 import type { Session } from "./credentials";
-import { assembleSources, type Snapshot, type CloudObject } from "./manifest";
+import { assembleSources, type Snapshot, type CloudObject, type CloudDoc } from "./manifest";
 import { XMLParser } from "fast-xml-parser";
 import { renderHandwritingRef } from "./handwriting";
 
@@ -16,7 +16,20 @@ const xml = new XMLParser({ ignoreAttributes: true, parseTagValue: false, proces
 const encodeKey = (s: string) => s.split("/").map(encodeURIComponent).join("/");
 const REQUEST_TIMEOUT_MS = 120_000;
 const BLOB_CACHE_BYTES = 32 * 1024 * 1024;
-interface StorageCredentials { buckets: any; sts: any; until: number }
+interface StorageCredentials {
+  buckets: Record<string, { bucket: string; aliEndpoint: string }>;
+  sts: { AccessKeyId: string; AccessKeySecret: string; SecurityToken: string };
+  until: number;
+}
+interface ChangeFeed {
+  results: { id?: string; doc?: CloudDoc; changes?: unknown[]; deleted?: boolean; removed?: boolean }[];
+  last_seq: string;
+}
+interface StorageListing {
+  IsTruncated: string;
+  Contents?: { Key: string; Size: string; ETag?: string; LastModified?: string }[];
+  NextMarker?: string;
+}
 export async function ossSignature(secret: string, bucket: string, key: string, date: string, token: string): Promise<string> {
   const bytes = new TextEncoder();
   const material = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
@@ -42,26 +55,27 @@ export class BooxClient {
   }
   private async request(req: HttpRequest): Promise<HttpResponse> {
     for (let attempt = 0; ; attempt++) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timer: number | undefined;
       // requestUrl has no cancellation API. Bound our wait; a late transport
       // response is ignored and cannot enter the blob cache after this fails.
       const r = await Promise.race([
         this.transport(req),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("BOOX request timed out after two minutes. Try syncing again.")), REQUEST_TIMEOUT_MS); }),
-      ]).finally(() => clearTimeout(timer));
+        new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error("BOOX request timed out after two minutes. Try syncing again.")), REQUEST_TIMEOUT_MS); }),
+      ]).finally(() => window.clearTimeout(timer));
       if (req.method === "GET" && [429, 502, 503, 504].includes(r.status) && attempt < 2) {
-        await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); continue;
+        await new Promise(resolve => window.setTimeout(resolve, 500 * (attempt + 1))); continue;
       }
       if (r.status < 200 || r.status >= 300) throw new BooxApiError(r.status,
         r.status === 401 ? "BOOX session expired. Connect again in settings." : `BOOX request failed (${r.status}). Try syncing again.`);
       return r;
     }
   }
-  private async api(path: string, body?: object): Promise<any> {
+  private async api<T = unknown>(path: string, body?: object): Promise<{ data: T; result_code?: unknown }> {
     const r = await this.request({ url: `https://${this.host}/api/1/${path}`, method: body ? "POST" : "GET",
       headers: { ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), ...(body ? { "Content-Type": "application/json;charset=utf-8" } : {}) },
       body: body ? JSON.stringify(body) : undefined });
-    let value; try { value = JSON.parse(r.text); } catch { throw new Error("BOOX returned an unreadable response. Try again later."); }
+    let parsed: unknown; try { parsed = JSON.parse(r.text); } catch { throw new Error("BOOX returned an unreadable response. Try again later."); }
+    const value = parsed as { data: T; result_code?: unknown };
     if (!value || (value.result_code != null && value.result_code !== 0)) throw new BooxApiError(r.status, "BOOX rejected the request. Check your region and verification code, or try again later.");
     return value;
   }
@@ -72,22 +86,22 @@ export class BooxClient {
   }
   async login(email: string, code: string, region: string): Promise<Session> {
     if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit code from your email.");
-    const response = await this.api("users/signupByPhoneOrEmail", { mobi: email, code });
+    const response = await this.api<{ token: string }>("users/signupByPhoneOrEmail", { mobi: email, code });
     if (!response.data?.token) throw new Error("BOOX did not return a session. Request a new code.");
     this.token = response.data.token;
     const account = await this.me();
     return { region, email, uid: String(account.uid), token: this.token };
   }
   async me(): Promise<{ uid: string; email?: string }> {
-    const result = (await this.api("users/me")).data;
+    const result = (await this.api<{ uid: string; email?: string }>("users/me")).data;
     if (!result?.uid) throw new Error("BOOX did not return an account ID.");
     this.uid = String(result.uid); return result;
   }
-  private async channel(suffix: string): Promise<any[]> {
-    const docs = new Map<string, any>(); let since = "0";
+  private async channel(suffix: string): Promise<CloudDoc[]> {
+    const docs = new Map<string, CloudDoc>(); let since = "0";
     for (;;) {
       if (!this.cookie) {
-        const data = (await this.api("users/syncToken")).data;
+        const data = (await this.api<{ session_id: string; cookie_name?: string }>("users/syncToken")).data;
         if (!data?.session_id || !/^[\w-]+$/.test(data.cookie_name || "SyncGatewaySession") || /[\r\n;]/.test(data.session_id)) throw new Error("Invalid BOOX sync session.");
         this.cookie = `${data.cookie_name || "SyncGatewaySession"}=${data.session_id}`;
       }
@@ -98,7 +112,8 @@ export class BooxClient {
         if (!(e instanceof BooxApiError) || e.status !== 401) throw e;
         this.cookie = ""; throw new Error("BOOX sync session expired. Retry sync to refresh it.");
       }
-      const data = JSON.parse(r.text);
+      const parsed: unknown = JSON.parse(r.text);
+      const data = parsed as ChangeFeed;
       if (!Array.isArray(data.results) || data.last_seq == null) throw new Error("Incomplete BOOX change feed; sync stopped to protect local files.");
       for (const row of data.results) {
         const id = row.id || row.doc?._id;
@@ -120,7 +135,7 @@ export class BooxClient {
   private async storageCredentials(): Promise<StorageCredentials> {
     if (this.credentials && this.credentials.until > Date.now()) return this.credentials;
     if (!this.credentialsLoading) {
-      this.credentialsLoading = Promise.all([this.api("config/buckets"), this.api("config/stss")])
+      this.credentialsLoading = Promise.all([this.api<StorageCredentials["buckets"]>("config/buckets"), this.api<StorageCredentials["sts"]>("config/stss")])
         .then(([buckets, sts]) => this.credentials = { buckets: buckets.data, sts: sts.data, until: Date.now() + 25 * 60_000 })
         .finally(() => { this.credentialsLoading = null; });
     }
@@ -152,7 +167,9 @@ export class BooxClient {
       const query = new URLSearchParams({ prefix: `${this.uid}/`, "max-keys": "1000", marker });
       const r = await this.oss("", query.toString());
       if (/<!DOCTYPE|<!ENTITY/i.test(r.text)) throw new Error("Unexpected BOOX storage XML declaration.");
-      const root = xml.parse(r.text).ListBucketResult;
+      const parsed: unknown = xml.parse(r.text);
+      const listing = parsed as { ListBucketResult: StorageListing };
+      const root = listing.ListBucketResult;
       if (!root || !["true", "false"].includes(root.IsTruncated)) throw new Error("Incomplete BOOX storage listing; sync stopped.");
       for (const item of root.Contents ?? []) {
         if (typeof item.Key !== "string" || !Number.isFinite(Number(item.Size))) throw new Error("Invalid BOOX storage entry.");

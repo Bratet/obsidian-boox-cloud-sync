@@ -6,6 +6,7 @@ HTMLElement.prototype.createEl = function (tag, options = {}) {
   this.append(el); return el;
 };
 export class Notice { constructor(message) { window.notices.push(message); } }
+export const Platform = { isAndroidApp: false };
 export class Modal {
   constructor(app) { this.app = app; this.contentEl = document.createElement("section"); this.contentEl.className = "modal"; }
   open() { document.body.append(this.contentEl); this.onOpen(); }

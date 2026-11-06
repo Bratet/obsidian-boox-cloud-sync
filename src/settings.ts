@@ -4,8 +4,10 @@ import type { BooxSettings } from "./types";
 import { ConnectModal } from "./connect-modal";
 import { safeFolder, nameFromTemplate, formatDate } from "./paths";
 
-import { DEFAULT_SETTINGS } from "./preferences";
 export { DEFAULT_SETTINGS } from "./preferences";
+type TextSetting = "syncFolder" | "highlightsFolder" | "notebooksFolder" | "memosFolder" | "filesFolder" | "notebookName" | "highlightName" | "memoName" | "attachmentName" | "pageName" | "dateFormat";
+type ToggleSetting = { [K in keyof BooxSettings]-?: NonNullable<BooxSettings[K]> extends boolean ? K : never }[keyof BooxSettings];
+
 export class BooxSettingTab extends PluginSettingTab {
   private statusTimer: number | null = null;
   constructor(app: App, private plugin: BooxSyncPlugin) { super(app, plugin); }
@@ -18,28 +20,18 @@ export class BooxSettingTab extends PluginSettingTab {
     new Setting(el).setName("Read notes from")
       .setDesc(Platform.isAndroidApp
         ? "This tablet reads the BOOX apps' own files, including notes the BOOX cloud never received. No login needed."
-        : "A Syncthing folder is a copy of the tablet's .ksync folder kept current by Syncthing. It includes notes the BOOX cloud never received. No login needed.")
+        : "The BOOX tablet reads its own BOOX files, including notes the BOOX cloud never received, and vault sync brings them here. No login needed.")
       .addDropdown(d => {
         if (Platform.isAndroidApp) d.addOption("tablet", "This tablet");
-        if (Platform.isDesktopApp) d.addOption("folder", "Syncthing folder");
+        else if (s.source === "tablet") d.addOption("tablet", "The BOOX tablet (via vault sync)");
         d.addOption("cloud", "BOOX cloud").setValue(s.source || "cloud").setDisabled(this.plugin.syncing)
-          .onChange(async v => { s.source = v === "tablet" || v === "folder" ? v : "cloud"; await this.plugin.saveSettings(); this.display(); });
-      });
-    if (s.source === "folder") new Setting(el).setName("Syncthing folder")
-      .setDesc("Absolute path of the folder Syncthing syncs the tablet's .ksync into. It contains couch, document and point.")
-      .addText(t => {
-        t.setPlaceholder("/home/you/BOOX-ksync").setValue(s.folderPath || "");
-        t.inputEl.addEventListener("change", async () => {
-          if (this.plugin.syncing) { new Notice("Wait for the current sync before changing settings."); t.setValue(s.folderPath || ""); return; }
-          s.folderPath = t.getValue().trim().replace(/\/+$/, ""); await this.plugin.saveSettings(); this.display();
-        });
+          .onChange(async v => { s.source = v === "tablet" ? v : "cloud"; await this.plugin.saveSettings(); this.display(); });
       });
     if (s.source === "cloud") {
-      const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : s.encryptedSession ? "Upgrade pending: enter your old passphrase once. No more unlocking after that." : "Not connected";
+      const status = this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : "Not connected";
       const account = new Setting(el).setName("Connection").setDesc(status);
-      if (s.encryptedSession && !this.plugin.connected) account.addButton(b => b.setButtonText("Finish upgrade").setCta().onClick(() => new ConnectModal(this.app, this.plugin, () => this.display(), true).open()));
       account.addButton(b => b.setButtonText(s.account ? "Connect again" : "Connect").setDisabled(this.plugin.syncing).onClick(() => new ConnectModal(this.app, this.plugin, () => this.display()).open()));
-      if (this.plugin.connected || s.encryptedSession) account.addButton(b => b.setButtonText("Disconnect").setDisabled(this.plugin.syncing).onClick(async () => { await this.plugin.disconnect(); this.display(); }));
+      if (this.plugin.connected) account.addButton(b => b.setButtonText("Disconnect").setDisabled(this.plugin.syncing).onClick(async () => { await this.plugin.disconnect(); this.display(); }));
     }
     let syncButton: ButtonComponent;
     const syncStatus = new Setting(el).setName("Sync status").setDesc(this.plugin.status)
@@ -51,25 +43,28 @@ export class BooxSettingTab extends PluginSettingTab {
       syncButton.setButtonText(this.plugin.syncing ? "Syncing…" : "Sync now").setDisabled(!this.plugin.connected || this.plugin.syncing);
     }, 500);
     heading("Sync");
-    const text = (key: keyof BooxSettings, title: string, desc: string, validate?: (v: string) => string) => {
+    const text = (key: TextSetting, title: string, desc: string, validate?: (v: string) => string) => {
       new Setting(el).setName(title).setDesc(desc).addText(t => {
-        t.setValue(String(s[key] ?? ""));
-        t.inputEl.addEventListener("change", async () => {
-          if (this.plugin.syncing) { new Notice("Wait for the current sync before changing settings."); t.setValue(String(s[key] ?? "")); return; }
-          try { const value = validate ? validate(t.getValue().trim()) : t.getValue().trim(); (s as any)[key] = value; await this.plugin.saveSettings(); }
-          catch (e: any) { new Notice(e.message); t.setValue(String(s[key] ?? "")); }
+        t.setValue(s[key] ?? "");
+        t.inputEl.addEventListener("change", () => {
+          if (this.plugin.syncing) { new Notice("Wait for the current sync before changing settings."); t.setValue(s[key] ?? ""); return; }
+          try {
+            const value = validate ? validate(t.getValue().trim()) : t.getValue().trim();
+            s[key] = value;
+            void this.plugin.saveSettings().catch((e: unknown) => { new Notice(e instanceof Error ? e.message : String(e)); t.setValue(s[key] ?? ""); });
+          } catch (e: unknown) { new Notice(e instanceof Error ? e.message : String(e)); t.setValue(s[key] ?? ""); }
         });
       });
     };
-    const toggle = (key: keyof BooxSettings, title: string, desc = "") => new Setting(el).setName(title).setDesc(desc).addToggle(t => t.setValue(Boolean(s[key])).setDisabled(this.plugin.syncing).onChange(async v => { (s as any)[key] = v; await this.plugin.saveSettings(); }));
+    const toggle = (key: ToggleSetting, title: string, desc = "") => new Setting(el).setName(title).setDesc(desc).addToggle(t => t.setValue(Boolean(s[key])).setDisabled(this.plugin.syncing).onChange(async v => { s[key] = v; await this.plugin.saveSettings(); }));
     text("syncFolder", "Sync folder", "Vault folder for BOOX content. Changing it starts a separate mirror; existing files stay in the old folder.", v => {
-      const path = safeFolder(v); if (!path) throw new Error("Choose a non-empty sync folder."); return path;
+      const path = safeFolder(v, this.app.vault.configDir); if (!path) throw new Error("Choose a non-empty sync folder."); return path;
     });
     new Setting(el).setName("Sync interval (minutes)").setDesc("0 disables scheduled sync. Obsidian must be open. Unchanged notebooks and memos are skipped, so a sync with nothing new is quick.").addText(t => {
       t.setValue(String(s.intervalMinutes)); t.inputEl.type = "number"; t.inputEl.min = "0";
-      t.inputEl.addEventListener("change", async () => { const n = Number(t.getValue());
+      t.inputEl.addEventListener("change", () => { const n = Number(t.getValue());
         if (!Number.isInteger(n) || n < 0 || n > 1440) { new Notice("Enter a whole number from 0 to 1440."); return; }
-        s.intervalMinutes = n; await this.plugin.saveSettings(); this.plugin.rescheduleInterval();
+        s.intervalMinutes = n; void this.plugin.saveSettings().then(() => this.plugin.rescheduleInterval()).catch((e: unknown) => new Notice(e instanceof Error ? e.message : String(e)));
       });
     });
     toggle("syncOnStartup", "Sync on startup", "Start syncing a few seconds after Obsidian opens.");
@@ -78,9 +73,9 @@ export class BooxSettingTab extends PluginSettingTab {
     heading("Folders and file names");
     el.createEl("p", { text: "File extensions are added automatically. New naming settings take effect on the next sync; edited files are kept." });
     for (const [key, title] of [["highlightsFolder", "Highlights folder"], ["notebooksFolder", "Notebooks folder"], ["memosFolder", "Memos folder"], ["filesFolder", "Attachments folder"]] as const)
-      text(key, title, "Relative to the sync folder; nested folders are supported.", v => { const p = safeFolder(v); if (!p) throw new Error("Enter a folder name."); return p; });
+      text(key, title, "Relative to the sync folder; nested folders are supported.", v => { const p = safeFolder(v, this.app.vault.configDir); if (!p) throw new Error("Enter a folder name."); return p; });
     toggle("preserveFolders", "Keep device folder hierarchy", "Place notebooks inside their BOOX folders, including empty folders.");
-    const naming = (key: keyof BooxSettings, title: string, desc: string, values: Record<string, string | number>) => text(key, title, `${desc} Example: ${nameFromTemplate(String(s[key]), values)}`, v => {
+    const naming = (key: TextSetting, title: string, desc: string, values: Record<string, string | number>) => text(key, title, `${desc} Example: ${nameFromTemplate(String(s[key]), values)}`, v => {
       if (!v) throw new Error("Enter a naming template."); nameFromTemplate(v, values);
       if (key === "pageName" && !v.includes("{page}")) throw new Error("Page names must include {page}."); return v;
     });
@@ -97,6 +92,6 @@ export class BooxSettingTab extends PluginSettingTab {
       .addDropdown(d => d.addOption("pdf", "PDF document").addOption("png", "PNG pages").setValue(s.exportFormat || "pdf").setDisabled(this.plugin.syncing)
         .onChange(async v => { s.exportFormat = v as "pdf" | "png"; await this.plugin.saveSettings(); }));
     new Setting(el).setName("Highlight block template").setDesc("Leave empty for quote callouts. Use {quote}, {note}, {chapter}, {page}, {id}; one block per highlight.")
-      .addTextArea(t => { t.setValue(s.highlightTemplate || ""); t.inputEl.rows = 5; t.inputEl.addEventListener("change", async () => { s.highlightTemplate = t.getValue(); await this.plugin.saveSettings(); }); });
+      .addTextArea(t => { t.setValue(s.highlightTemplate || ""); t.inputEl.rows = 5; t.inputEl.addEventListener("change", () => { s.highlightTemplate = t.getValue(); void this.plugin.saveSettings().catch((e: unknown) => new Notice(e instanceof Error ? e.message : String(e))); }); });
   }
 }

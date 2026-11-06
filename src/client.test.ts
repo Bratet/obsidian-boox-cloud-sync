@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { BooxClient, BooxApiError, ossSignature, type HttpRequest, type HttpResponse } from "./client";
 import { createHmac } from "node:crypto";
+beforeAll(() => { vi.stubGlobal("window", globalThis); });
+afterAll(() => { vi.unstubAllGlobals(); });
 function fake(handler: (r: HttpRequest) => Partial<HttpResponse>) {
   const calls: HttpRequest[] = [];
   return { calls, transport: async (r: HttpRequest): Promise<HttpResponse> => { calls.push(r); return { status: 200, text: "{}", arrayBuffer: new ArrayBuffer(0), ...handler(r) }; } };
