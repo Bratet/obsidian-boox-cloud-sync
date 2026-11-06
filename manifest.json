@@ -1,7 +1,7 @@
 {
   "id": "boox-cloud-sync",
   "name": "BOOX Notes Sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.11.4",
   "description": "Import BOOX notebooks, calendar memos and book highlights as PDFs and Markdown, read straight from the BOOX tablet or from the BOOX cloud.",
   "author": "Ahmed Mrabet",

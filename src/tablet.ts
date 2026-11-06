@@ -16,6 +16,10 @@ export interface TabletFiles {
 
 const CHANNELS = { notes: "NOTE_TREE", library: "READER_LIBRARY", calendar: "CALENDAR_TREE" } as const;
 
+// This device has no readable BOOX note store: an Android phone sharing the
+// vault, or a tablet without "All files access". Background syncs stay quiet.
+export class TabletUnavailableError extends Error {}
+
 // Reads notebooks, memos and highlights from the BOOX apps' own files — the
 // same data the BOOX cloud mirrors, including what never uploaded.
 export class TabletSource {
@@ -29,7 +33,10 @@ export class TabletSource {
 
   async sources(): Promise<Manifest> {
     this.progress("Reading BOOX note databases…");
-    const candidates = (await this.files.list(`${this.root}/couch`))
+    let couch: TabletEntry[];
+    try { couch = await this.files.list(`${this.root}/couch`); }
+    catch (e) { throw new TabletUnavailableError(e instanceof Error ? e.message : String(e)); }
+    const candidates = couch
       .map(e => /^(.+)-NOTE_TREE\.cblite2$/.exec(e.name)?.[1]).filter((u): u is string => !!u && u !== "share_user");
     // Every account ever signed in keeps its databases. The one in use is the
     // one whose notes or memos were edited last.
@@ -40,7 +47,7 @@ export class TabletSource {
       const latest = Math.max(-1, ...[...snapshot.notes, ...snapshot.calendar].map(d => Number(d.updatedAt) || 0));
       if (latest > newest) { uid = candidate; docs = snapshot; newest = latest; }
     }
-    if (!docs) throw new Error(`No BOOX note databases found in ${this.root}/couch. On the tablet, open the Notes app once.`);
+    if (!docs) throw new TabletUnavailableError(`No BOOX note databases found in ${this.root}/couch. On a BOOX tablet, open the Notes app once.`);
     docs.library = await this.channel(uid, "library");
     const items = [
       ...docs.notes.filter(d => d.uniqueId && d.status !== 0).map(d => ({ id: String(d.uniqueId), kind: "note" })),

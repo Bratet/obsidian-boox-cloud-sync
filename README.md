@@ -28,7 +28,7 @@ The plugin reads your notes from one of two places. Pick it under **Settings →
 | Network use | None | BOOX servers and BOOX's Alibaba OSS storage |
 | Notes that never uploaded | Included | Missing |
 | Cloud attachments | Not available | Included |
-| Reaching your other devices | Through your vault sync (Obsidian Sync or similar) | Each device can sync on its own |
+| Reaching your other devices | Through your vault sync (Obsidian Sync or similar) | Through your vault sync, from the one connected device |
 
 ### This tablet
 
@@ -71,7 +71,7 @@ Requires Obsidian 1.11.4 or newer.
 
 The plugin reads the tablet when Obsidian starts, every sync interval, and whenever Obsidian comes back to the foreground.
 
-Run it on the tablet only. If your vault sync also copies plugins and their settings to your computers (Obsidian Sync does), the plugin stays idle there and the exports arrive through vault sync. Don't change the source on a computer: the change syncs back to the tablet.
+Run it on the tablet only. If your vault sync also copies plugins and their settings to your other devices (Obsidian Sync does), the plugin stays idle on them: computers never read the tablet source, and an Android phone without BOOX notes skips it quietly (only **Sync now** reports why). The exports arrive through vault sync. Don't change the source on another device: the change syncs back to the tablet.
 
 ## Set up: BOOX cloud
 
@@ -81,6 +81,8 @@ Run it on the tablet only. If your vault sync also copies plugins and their sett
 4. Enter your BOOX account email, select **Send code**, enter the six-digit code, then select **Connect and sync**.
 
 The session is kept in your system keychain through Obsidian's secret storage, so syncing resumes after a restart. **Disconnect** removes it; your exported files stay.
+
+Connect on one device per vault. The keychain session isn't copied by vault sync, so your other devices stay idle and receive the exports through vault sync. Two connected devices would both write the same files, and vault sync could create conflict copies.
 
 ## Syncing
 

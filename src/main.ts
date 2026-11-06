@@ -3,7 +3,7 @@ import { parseSession, type Session } from "./credentials";
 import { safeFolder } from "./paths";
 import type { BooxSettings, Manifest } from "./types";
 import { BooxClient, type HttpTransport } from "./client";
-import { TabletSource, type TabletFiles } from "./tablet";
+import { TabletSource, TabletUnavailableError, type TabletFiles } from "./tablet";
 import { BooxSettingTab } from "./settings";
 import { restorePreferences } from "./preferences";
 import type { VaultIO } from "./ports";
@@ -213,7 +213,9 @@ export default class BooxSyncPlugin extends Plugin {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.status = `Sync failed: ${message}`;
-      new Notice(`BOOX sync failed: ${message}`);
+      // Only "Sync now" reports a missing BOOX note store, so an Android phone
+      // sharing the vault (and its synced settings) isn't nagged every run.
+      if (trigger === "manual" || !(e instanceof TabletUnavailableError)) new Notice(`BOOX sync failed: ${message}`);
     } finally {
       this.syncing = false;
     }
@@ -231,7 +233,7 @@ function capacitorFiles(): TabletFiles {
   // Obsidian mobile's runtime global; absent on desktop. Its members are checked below.
   const cap = "Capacitor" in window ? window.Capacitor as CapacitorBridge : undefined;
   const fs = cap?.Plugins?.Filesystem;
-  if (!cap || !fs || typeof cap.convertFileSrc !== "function") throw new Error("This Obsidian app cannot read files outside the vault.");
+  if (!cap || !fs || typeof cap.convertFileSrc !== "function") throw new TabletUnavailableError("This Obsidian app cannot read files outside the vault.");
   return {
     async list(path) {
       try {

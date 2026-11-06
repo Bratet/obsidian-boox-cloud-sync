@@ -1,6 +1,6 @@
 {
   "name": "boox-cloud-sync",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Import BOOX notebooks, calendar memos and book highlights as PDFs and Markdown, read straight from the BOOX tablet or from the BOOX cloud.",
   "main": "main.js",
   "scripts": {
