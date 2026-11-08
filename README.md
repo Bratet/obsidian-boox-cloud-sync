@@ -60,7 +60,7 @@ In Obsidian, open **Settings → Community plugins → Browse**, search for **BO
 
 To install by hand, download `main.js` and `manifest.json` from the [latest release](https://github.com/Bratet/obsidian-boox-cloud-sync/releases/latest) into `<your vault>/.obsidian/plugins/boox-cloud-sync/`, then enable the plugin under **Community plugins**.
 
-Requires Obsidian 1.11.4 or newer.
+Requires Obsidian 1.13.0 or newer. Older Obsidian versions are offered release 1.0.1.
 
 ## Set up: this tablet
 

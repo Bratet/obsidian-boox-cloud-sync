@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
@@ -33,6 +36,11 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: main.js
 
       - name: Publish release
         env:

@@ -18,11 +18,11 @@ try {
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto(pathToFileURL(`${dir}/smoke.html`).href);
   await page.getByLabel("Notebook name", { exact: true }).fill("{title} - {id}");
-  await page.getByLabel("Notebook name", { exact: true }).blur();
+  await page.getByLabel("Notebook name", { exact: true }).blur(); await page.waitForTimeout(50);
   assert.equal(await page.evaluate(() => window.plugin.settings.notebookName), "{title} - {id}");
   await page.getByLabel("Sync folder", { exact: true }).fill("../outside"); await page.getByLabel("Sync folder", { exact: true }).blur();
   assert.equal(await page.evaluate(() => window.plugin.settings.syncFolder), "BOOX");
-  assert.match((await page.evaluate(() => window.notices)).at(-1), /vault-relative/);
+  assert.match(await page.locator(".setting", { has: page.locator(".name", { hasText: /^Sync folder$/ }) }).locator(".error").textContent(), /vault-relative/);
   await page.screenshot({ path: `${dir}/settings.png`, fullPage: true });
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.getByLabel("Region", { exact: true }).selectOption("push");
