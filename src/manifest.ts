@@ -7,7 +7,7 @@ export interface CloudDoc {
   associateDate?: string | number; type?: number; parentUniqueId?: string;
   pageNameList?: { pageNameList?: string[] }; activeScene?: number; updatedAt?: number;
   content?: string; name?: string; documentId?: string; quote?: string; note?: string;
-  chapter?: string; pageNumber?: number;
+  chapter?: string; pageNumber?: number; nativeAbsolutePath?: string;
 }
 interface MessageContent {
   formats?: string[];
@@ -81,7 +81,8 @@ export function assembleSources(uid: string, docs: Snapshot, objects: CloudObjec
   const books = new Map(docs.library.filter(d => d.name).map(d => [d.uniqueId, d.title || d.name!.replace(/\.[^.]+$/, "")]));
   result.highlights = docs.library.filter(d => !d._deleted && !d.status && (d.quote || d.note)).map(d => ({
     id: (d.uniqueId || d._id)!, bookId: (d.documentId || d.uniqueId || d._id)!, book: books.get(d.documentId) || "Book",
-    quote: (d.quote || "").replace(/\r\n?/g, "\n"), note: (d.note || "").replace(/\r\n?/g, "\n"), chapter: d.chapter || "", page: d.pageNumber ?? null,
+    quote: (d.quote || "").replace(/\r\n?/g, "\n"), note: (d.note || "").replace(/\r\n?/g, "\n"), chapter: d.chapter || "",
+    page: d.pageNumber != null ? d.pageNumber + 1 : null, // pageNumber is a 0-based page index
   }));
   result.notebooks.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   result.memos.sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));

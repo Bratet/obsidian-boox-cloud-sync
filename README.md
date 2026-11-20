@@ -36,6 +36,7 @@ The plugin reads your notes from one of two places. Pick it under **Settings →
 - Gets everything on the tablet. The BOOX cloud only has what the tablet managed to upload, and the BOOX calendar app silently skips some memos and never retries them.
 - No login, no network: your notes never leave the tablet except through your own vault sync.
 - Fresh as soon as you switch back to Obsidian.
+- Reads PDF highlights from the book file itself, where NeoReader saves them. Its library database, which the BOOX cloud mirrors, can stop receiving new highlights and keep deleted ones.
 
 **Cons**
 - Obsidian has to be installed and running on the BOOX tablet, with **All files access** granted.

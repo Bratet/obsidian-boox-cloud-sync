@@ -1,7 +1,8 @@
 import type { Manifest } from "./types";
-import { assembleSources, type CloudObject, type Snapshot } from "./manifest";
+import { assembleSources, type CloudDoc, type CloudObject, type Snapshot } from "./manifest";
 import { readCblDocs } from "./cblite";
 import { renderHandwritingRef } from "./handwriting";
+import { readPdfHighlights } from "./pdf-highlights";
 
 // Where BOOX's sync service keeps every notebook and memo on the device:
 // note databases under couch/, stroke files under document/ and point/.
@@ -15,6 +16,10 @@ export interface TabletFiles {
 }
 
 const CHANNELS = { notes: "NOTE_TREE", library: "READER_LIBRARY", calendar: "CALENDAR_TREE" } as const;
+
+// Highlights parsed from each book PDF, keyed by path, reused across syncs
+// while the file's size and mtime are unchanged.
+const pdfCache = new Map<string, { stamp: string; docs: CloudDoc[] | null }>();
 
 // This device has no readable BOOX note store: an Android phone sharing the
 // vault, or a tablet without "All files access". Background syncs stay quiet.
@@ -48,7 +53,7 @@ export class TabletSource {
       if (latest > newest) { uid = candidate; docs = snapshot; newest = latest; }
     }
     if (!docs) throw new TabletUnavailableError(`No BOOX note databases found in ${this.root}/couch. On a BOOX tablet, open the Notes app once.`);
-    docs.library = await this.channel(uid, "library");
+    docs.library = await this.pdfHighlights(await this.channel(uid, "library"));
     const items = [
       ...docs.notes.filter(d => d.uniqueId && d.status !== 0).map(d => ({ id: String(d.uniqueId), kind: "note" })),
       ...docs.calendar.filter(d => d.uniqueId && d.associateDate).map(d => ({ id: String(d.uniqueId), kind: "calendar" })),
@@ -77,6 +82,33 @@ export class TabletSource {
     }, this.progress);
     if (!rendered) throw new Error("Attachments are only available from the BOOX cloud.");
     return rendered;
+  }
+
+  // Replace each PDF book's database highlights with the ones saved in the
+  // file. A book whose file can't be read keeps its database highlights.
+  private async pdfHighlights(library: CloudDoc[]): Promise<CloudDoc[]> {
+    let out = library;
+    for (const book of library) {
+      const path = book.nativeAbsolutePath;
+      if (!book.uniqueId || book._deleted || !path?.toLowerCase().endsWith(".pdf")) continue;
+      const slash = path.lastIndexOf("/");
+      let found: CloudDoc[] | null;
+      try {
+        const entry = (await this.files.list(path.slice(0, slash))).find(e => e.name === path.slice(slash + 1));
+        if (!entry) continue;
+        const stamp = `${entry.size}-${entry.mtime}`;
+        const cached = pdfCache.get(path);
+        if (cached?.stamp === stamp) found = cached.docs;
+        else {
+          this.progress(`Reading highlights in ${book.name ?? "a book"}…`);
+          found = await readPdfHighlights(await this.files.read(path), book.uniqueId);
+          pdfCache.set(path, { stamp, docs: found });
+        }
+      } catch { continue; }
+      if (!found) continue;
+      out = [...out.filter(d => d.documentId !== book.uniqueId || !(d.quote || d.note)), ...found];
+    }
+    return out;
   }
 
   private async channel(uid: string, kind: keyof typeof CHANNELS) {

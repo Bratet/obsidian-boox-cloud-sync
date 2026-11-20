@@ -31,7 +31,7 @@ describe("cloud inventory", () => {
   it("maps book names and retains each attachment's logical storage bucket", () => {
     const m = assembleSources("u", docs({ library: [{ uniqueId: "b", name: "Book" }, { uniqueId: "h", documentId: "b", quote: "Quote", pageNumber: 4 }],
       messages: [{ content: JSON.stringify({ name: "File.pdf", formats: ["pdf"], storage: { pdf: { oss: { key: "k", bucket: "other" } } } }) }] }), []);
-    expect(m.highlights[0]).toMatchObject({ id: "h", book: "Book", page: 4 });
+    expect(m.highlights[0]).toMatchObject({ id: "h", book: "Book", page: 5 });
     expect(m.files[0]).toMatchObject({ key: "k", bucket: "other" });
   });
   it("keeps live reader highlights (status 0) and drops deleted ones (status 1)", () => {
@@ -40,6 +40,6 @@ describe("cloud inventory", () => {
       { uniqueId: "old", documentId: "b", quote: "Bad customer", status: 1, pageNumber: 4 },
       { uniqueId: "new", documentId: "b", quote: "Bad customer \r\nconversations", status: 0, pageNumber: 4 },
     ] }), []);
-    expect(m.highlights).toEqual([{ id: "new", bookId: "b", book: "The Mom Test", quote: "Bad customer \nconversations", note: "", chapter: "", page: 4 }]);
+    expect(m.highlights).toEqual([{ id: "new", bookId: "b", book: "The Mom Test", quote: "Bad customer \nconversations", note: "", chapter: "", page: 5 }]);
   });
 });
