@@ -34,4 +34,12 @@ describe("cloud inventory", () => {
     expect(m.highlights[0]).toMatchObject({ id: "h", book: "Book", page: 4 });
     expect(m.files[0]).toMatchObject({ key: "k", bucket: "other" });
   });
+  it("keeps live reader highlights (status 0) and drops deleted ones (status 1)", () => {
+    const m = assembleSources("u", docs({ library: [
+      { uniqueId: "b", name: "The Mom Test.pdf", status: 0 },
+      { uniqueId: "old", documentId: "b", quote: "Bad customer", status: 1, pageNumber: 4 },
+      { uniqueId: "new", documentId: "b", quote: "Bad customer \r\nconversations", status: 0, pageNumber: 4 },
+    ] }), []);
+    expect(m.highlights).toEqual([{ id: "new", bookId: "b", book: "The Mom Test", quote: "Bad customer \nconversations", note: "", chapter: "", page: 4 }]);
+  });
 });

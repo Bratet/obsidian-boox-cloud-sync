@@ -76,10 +76,12 @@ export function assembleSources(uid: string, docs: Snapshot, objects: CloudObjec
     if (oss?.key) result.files.push({ name: (c.name || oss.key.split("/").pop())!, size: c.size ?? null, fmt,
       key: oss.key, bucket: oss.bucket || "onyx-cloud", sig: objects.find(o => o.key === oss.key)?.etag });
   }
-  const books = new Map(docs.library.filter(d => d.name).map(d => [d.uniqueId, d.name]));
-  result.highlights = docs.library.filter(d => !d._deleted && d.status !== 0 && (d.quote || d.note)).map(d => ({
+  // Reader library records invert the notes convention: status 0 is live and
+  // 1 is a deleted highlight (BOOX keeps it when a selection is redone).
+  const books = new Map(docs.library.filter(d => d.name).map(d => [d.uniqueId, d.title || d.name!.replace(/\.[^.]+$/, "")]));
+  result.highlights = docs.library.filter(d => !d._deleted && !d.status && (d.quote || d.note)).map(d => ({
     id: (d.uniqueId || d._id)!, bookId: (d.documentId || d.uniqueId || d._id)!, book: books.get(d.documentId) || "Book",
-    quote: d.quote || "", note: d.note || "", chapter: d.chapter || "", page: d.pageNumber ?? null,
+    quote: (d.quote || "").replace(/\r\n?/g, "\n"), note: (d.note || "").replace(/\r\n?/g, "\n"), chapter: d.chapter || "", page: d.pageNumber ?? null,
   }));
   result.notebooks.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   result.memos.sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id.localeCompare(a.id));
