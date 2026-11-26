@@ -10,7 +10,16 @@ export type HttpTransport = (req: HttpRequest) => Promise<HttpResponse>;
 export class BooxApiError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = "BooxApiError"; }
 }
-export const HOSTS: Record<string, string> = { eur: "eur.boox.com", push: "push.boox.com" };
+export const HOSTS: Record<string, string> = {
+  eur: "eur.boox.com",
+  push: "push.boox.com",
+  cn: "send2boox.com",
+};
+export const REGION_LABELS: Record<string, string> = {
+  eur: "Europe (eur.boox.com)",
+  push: "Global (push.boox.com)",
+  cn: "China (send2boox.com)",
+};
 const xml = new XMLParser({ ignoreAttributes: true, parseTagValue: false, processEntities: true,
   isArray: name => name === "Contents" });
 const encodeKey = (s: string) => s.split("/").map(encodeURIComponent).join("/");
@@ -79,21 +88,28 @@ export class BooxClient {
     if (!value || (value.result_code != null && value.result_code !== 0)) throw new BooxApiError(r.status, "BOOX rejected the request. Check your region and verification code, or try again later.");
     return value;
   }
-  async sendCode(email: string): Promise<void> {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("Enter your BOOX account email.");
-    try { await this.api("users/sendVerifyCode", { mobi: email }); }
-    catch (e) { if (e instanceof BooxApiError && [404, 405].includes(e.status)) await this.api("users/sendMobileCode", { mobi: email }); else throw e; }
+  async sendCode(account: string): Promise<void> {
+    const normalized = account.trim();
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+    const phone = normalized.replace(/[\s-]/g, "");
+    const isPhone = /^\+?\d{6,15}$/.test(phone);
+    if (!isEmail && !isPhone) throw new Error("Enter your BOOX account email or phone number.");
+    const mobi = isEmail ? normalized : phone;
+    try { await this.api("users/sendVerifyCode", { mobi }); }
+    catch (e) { if (e instanceof BooxApiError && [404, 405].includes(e.status)) await this.api("users/sendMobileCode", { mobi }); else throw e; }
   }
-  async login(email: string, code: string, region: string): Promise<Session> {
-    if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit code from your email.");
-    const response = await this.api<{ token: string }>("users/signupByPhoneOrEmail", { mobi: email, code });
+  async login(account: string, code: string, region: string): Promise<Session> {
+    if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit verification code.");
+    const normalized = account.trim();
+    const mobi = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : normalized.replace(/[\s-]/g, "");
+    const response = await this.api<{ token: string }>("users/signupByPhoneOrEmail", { mobi, code });
     if (!response.data?.token) throw new Error("BOOX did not return a session. Request a new code.");
     this.token = response.data.token;
-    const account = await this.me();
-    return { region, email, uid: String(account.uid), token: this.token };
+    const profile = await this.me();
+    return { region, email: profile.email || normalized, uid: String(profile.uid), token: this.token };
   }
-  async me(): Promise<{ uid: string; email?: string }> {
-    const result = (await this.api<{ uid: string; email?: string }>("users/me")).data;
+  async me(): Promise<{ uid: string; email?: string; phone?: string; nickname?: string }> {
+    const result = (await this.api<{ uid: string; email?: string; phone?: string; nickname?: string }>("users/me")).data;
     if (!result?.uid) throw new Error("BOOX did not return an account ID.");
     this.uid = String(result.uid); return result;
   }
@@ -144,7 +160,7 @@ export class BooxClient {
   private async oss(key: string, query = "", logicalBucket = "onyx-cloud", refresh = true): Promise<HttpResponse> {
     const credentials = await this.storageCredentials();
     const { buckets, sts } = credentials;
-    const info = buckets?.[logicalBucket];
+    const info = buckets?.[logicalBucket] ?? Object.values(buckets ?? {}).find(b => b.bucket === logicalBucket);
     if (!info?.bucket || !info?.aliEndpoint || !sts?.AccessKeySecret || !sts?.SecurityToken) throw new Error("BOOX storage configuration is incomplete.");
     const endpoint = String(info.aliEndpoint).replace(/^https?:\/\//, "").replace(/\/$/, "");
     if (!/^[a-z0-9.-]+\.aliyuncs\.com$/i.test(endpoint) || !/^[a-z0-9-]+$/.test(info.bucket)) throw new Error("Unrecognized BOOX storage endpoint.");

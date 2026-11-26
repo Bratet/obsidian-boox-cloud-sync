@@ -25,12 +25,13 @@ try {
   assert.match(await page.locator(".setting", { has: page.locator(".name", { hasText: /^Sync folder$/ }) }).locator(".error").textContent(), /vault-relative/);
   await page.screenshot({ path: `${dir}/settings.png`, fullPage: true });
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await page.getByLabel("Region", { exact: true }).selectOption("push");
-  await page.getByLabel("BOOX account email", { exact: true }).fill("test@example.com");
-  await page.getByRole("button", { name: "Send code", exact: true }).click();
-  await page.getByLabel("Verification code", { exact: true }).fill("123456");
+  const modal = page.locator(".modal");
+  await modal.getByLabel("Region", { exact: true }).selectOption("push");
+  await modal.getByLabel("BOOX account email or phone", { exact: true }).fill("test@example.com");
+  await modal.getByRole("button", { name: "Send code", exact: true }).click();
+  await modal.getByLabel("Verification code", { exact: true }).fill("123456");
   await page.screenshot({ path: `${dir}/connect.png` });
-  await page.getByRole("button", { name: "Connect and sync", exact: true }).click();
+  await modal.getByRole("button", { name: "Connect and sync", exact: true }).click();
   await page.waitForFunction(() => window.plugin.connected);
   assert.equal(await page.evaluate(() => window.plugin.settings.account.uid), "synthetic");
   await page.evaluate(() => { window.plugin.syncing = true; });

@@ -1,6 +1,6 @@
 import { App, Modal, Setting, Notice } from "obsidian";
 import type BooxSyncPlugin from "./main";
-import { BooxClient } from "./client";
+import { BooxClient, REGION_LABELS } from "./client";
 
 export class ConnectModal extends Modal {
   private region: string;
@@ -19,11 +19,13 @@ export class ConnectModal extends Modal {
     const el = this.contentEl; el.empty();
     el.createEl("h2", { text: "Connect to BOOX" });
     el.createEl("p", { text: "Sign in directly to the same BOOX region used on your tablet. Enable cloud sync on the tablet first. Your login is kept in your system keychain." });
-    new Setting(el).setName("Region").addDropdown(d => d.addOption("eur", "Europe (eur.boox.com)").addOption("push", "Global (push.boox.com)")
-      .setValue(this.region).setDisabled(this.busy || this.sent).onChange(v => this.region = v));
-    new Setting(el).setName("BOOX account email").addText(t => { t.inputEl.type = "email"; t.setValue(this.email).setDisabled(this.busy || this.sent).onChange(v => this.email = v.trim()); });
+    new Setting(el).setName("Region").addDropdown(d => {
+      for (const [id, label] of Object.entries(REGION_LABELS)) d.addOption(id, label);
+      d.setValue(this.region).setDisabled(this.busy || this.sent).onChange(v => this.region = v);
+    });
+    new Setting(el).setName("BOOX account email or phone").addText(t => { t.inputEl.type = "text"; t.setValue(this.email).setDisabled(this.busy || this.sent).onChange(v => this.email = v.trim()); });
     if (this.sent) {
-      new Setting(el).setName("Verification code").setDesc("The six-digit code sent to your email.").addText(t => {
+      new Setting(el).setName("Verification code").setDesc("The six-digit verification code.").addText(t => {
         t.inputEl.inputMode = "numeric"; t.inputEl.maxLength = 6; t.setValue(this.code).setDisabled(this.busy).onChange(v => this.code = v.trim());
       });
     }
@@ -31,7 +33,7 @@ export class ConnectModal extends Modal {
     const controls = new Setting(el);
     controls.addButton(b => b.setButtonText(this.busy ? "Please wait…" : this.sent ? "Connect and sync" : "Send code")
       .setCta().setDisabled(this.busy).onClick(() => this.submit()));
-    if (this.sent) controls.addButton(b => b.setButtonText("Change email or resend").setDisabled(this.busy).onClick(() => { this.sent = false; this.code = ""; this.render(); }));
+    if (this.sent) controls.addButton(b => b.setButtonText("Change account or resend").setDisabled(this.busy).onClick(() => { this.sent = false; this.code = ""; this.render(); }));
   }
   private async submit() {
     if (this.busy) return;
@@ -39,7 +41,7 @@ export class ConnectModal extends Modal {
     try {
       if (!this.sent) {
         await new BooxClient(this.region, this.plugin.transport).sendCode(this.email);
-        this.sent = true; this.message = "Code sent. Check your inbox."; return;
+        this.sent = true; this.message = "Code sent. Check your email or messages."; return;
       } else {
         const session = await new BooxClient(this.region, this.plugin.transport).login(this.email, this.code, this.region);
         if (this.closed) return;

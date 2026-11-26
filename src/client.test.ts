@@ -34,6 +34,39 @@ describe("direct BOOX client", () => {
     expect(JSON.parse(f.calls[0].body!)).toEqual({ mobi: "a@b.com", code: "123456" });
     expect(f.calls[1].headers.Authorization).toBe("Bearer private-token");
   });
+  it("supports the China server (send2boox.com) with phone OTP and library highlights", async () => {
+    const f = fake(r => {
+      if (r.url.endsWith("users/sendVerifyCode")) return { text: '{"result_code":0}' };
+      if (r.url.endsWith("users/signupByPhoneOrEmail")) return response({ token: "cn-token" });
+      if (r.url.endsWith("users/me")) return response({ uid: "u-cn", phone: "13800138000" });
+      if (r.url.endsWith("users/syncToken")) return response({ session_id: "cn-cookie" });
+      if (r.url.includes("_changes")) {
+        const ch = new URL(r.url).searchParams.get("channels");
+        const results = ch === "u-cn-READER_LIBRARY"
+          ? [
+              { id: "b1", doc: { _id: "b1", uniqueId: "book1", name: "Sample.epub", title: "Sample Book" } },
+              { id: "h1", doc: { _id: "h1", uniqueId: "hl1", documentId: "book1", status: 0, quote: "Hello CN", note: "Note", pageNumber: 2 } },
+            ]
+          : [];
+        return { text: JSON.stringify({ results, last_seq: "1" }) };
+      }
+      if (r.url.endsWith("config/buckets")) return response({ "onyx-cloud": { bucket: "onyx-cloud", aliEndpoint: "oss-cn-shenzhen.aliyuncs.com" } });
+      if (r.url.endsWith("config/stss")) return response({ AccessKeyId: "ak", AccessKeySecret: "sk", SecurityToken: "sts" });
+      return { text: "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>" };
+    });
+    const client = new BooxClient("cn", f.transport);
+    await client.sendCode("13800138000");
+    expect(f.calls[0].url).toBe("https://send2boox.com/api/1/users/sendVerifyCode");
+    const session = await client.login("13800138000", "654321", "cn");
+    expect(session).toEqual({ region: "cn", email: "13800138000", uid: "u-cn", token: "cn-token" });
+    expect(f.calls[1].url).toBe("https://send2boox.com/api/1/users/signupByPhoneOrEmail");
+    const manifest = await new BooxClient("cn", f.transport, session.token).sources();
+    expect(manifest.highlights).toEqual([
+      { id: "hl1", bookId: "book1", book: "Sample Book", quote: "Hello CN", note: "Note", chapter: "", page: 3 },
+    ]);
+    expect(f.calls.some(r => r.url.startsWith("https://send2boox.com/neocloud/_changes?"))).toBe(true);
+    expect(f.calls.some(r => r.url.startsWith("https://onyx-cloud.oss-cn-shenzhen.aliyuncs.com/"))).toBe(true);
+  });
   it("rejects unsupported hosts before sending credentials", () => {
     expect(() => new BooxClient("https://other.example", fake(() => ({})).transport)).toThrow("region");
   });
