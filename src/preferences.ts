@@ -1,5 +1,5 @@
 import type { BooxSettings } from "./types";
-import type { Session } from "./credentials";
+import { isSupportedRegion, type Session } from "./credentials";
 
 export const DEFAULT_SETTINGS: BooxSettings = {
   source: "cloud", region: "eur", account: null, syncFolder: "BOOX", intervalMinutes: 15,
@@ -21,7 +21,7 @@ export function restorePreferences(raw: unknown, stored: Session | null = null):
     } else if (value === null || (typeof value === "object" && !Array.isArray(value))) Object.assign(settings, { [key]: value });
   }
   if (!Number.isInteger(settings.intervalMinutes) || settings.intervalMinutes < 0 || settings.intervalMinutes > 1440) settings.intervalMinutes = DEFAULT_SETTINGS.intervalMinutes;
-  if (!["eur", "push"].includes(settings.region || "")) settings.region = "eur";
+  if (!isSupportedRegion(settings.region)) settings.region = "eur";
   if (!["pdf", "png"].includes(settings.exportFormat || "")) settings.exportFormat = "pdf";
   if (!["cloud", "tablet"].includes(settings.source || "")) settings.source = "cloud";
   if (stored) {

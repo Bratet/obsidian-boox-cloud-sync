@@ -25,4 +25,7 @@ describe("preference restoration", () => {
     expect(restorePreferences({ source: "other" }).settings.source).toBe("cloud");
     expect(restorePreferences({ source: "tablet" }).settings.source).toBe("tablet");
   });
+  it("accepts the China server region", () => {
+    expect(restorePreferences({ region: "cn" }).settings.region).toBe("cn");
+  });
 });

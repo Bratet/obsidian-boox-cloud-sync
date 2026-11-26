@@ -2,6 +2,8 @@ import { App, PluginSettingTab, Notice, Platform, type ButtonComponent, type Set
 import type BooxSyncPlugin from "./main";
 import type { BooxSettings } from "./types";
 import { ConnectModal } from "./connect-modal";
+import { HOSTS, REGION_LABELS } from "./client";
+import { isSupportedRegion } from "./credentials";
 import { safeFolder, nameFromTemplate, formatDate } from "./paths";
 
 export { DEFAULT_SETTINGS } from "./preferences";
@@ -22,6 +24,7 @@ export class BooxSettingTab extends PluginSettingTab {
   async setControlValue(key: string, value: unknown): Promise<void> {
     const s = this.plugin.settings as unknown as Record<string, unknown>;
     s[key] = key === "source" ? (value === "tablet" ? "tablet" : "cloud")
+      : key === "region" ? (isSupportedRegion(value) ? value : "eur")
       : FOLDERS[key] ? safeFolder(String(value).trim(), this.app.vault.configDir)
       : typeof value === "string" && key !== "highlightTemplate" ? value.trim() : value;
     try { await this.plugin.saveSettings(); } catch (e: unknown) { new Notice(message(e)); }
@@ -53,13 +56,53 @@ export class BooxSettingTab extends PluginSettingTab {
             ? "This tablet reads the BOOX apps' own files, including notes the BOOX cloud never received. No login needed."
             : "The BOOX tablet reads its own BOOX files, including notes the BOOX cloud never received, and vault sync brings them here. No login needed.",
           control: { type: "dropdown", key: "source", options: sourceOptions, defaultValue: "cloud", disabled: syncing } },
+        { name: "Region",
+          desc: "BOOX cloud server region matching your tablet.",
+          visible: () => s.source === "cloud",
+          control: { type: "dropdown", key: "region", options: REGION_LABELS, defaultValue: "eur", disabled: syncing } },
         { name: "Connection", visible: () => s.source === "cloud", render: setting => {
-          setting.setDesc(this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid}` : "Not connected");
+          const host = HOSTS[s.region || "eur"] || s.region || "eur.boox.com";
+          setting.setDesc(this.plugin.connected ? `Connected as ${s.account?.email || s.account?.uid} (${host})` : "Not connected");
           setting.addButton(b => { connectButtons.push(b); b.setButtonText(s.account ? "Connect again" : "Connect").setDisabled(syncing()).onClick(() => new ConnectModal(this.app, this.plugin, () => this.update()).open()); });
           if (this.plugin.connected) setting.addButton(b => { connectButtons.push(b); b.setButtonText("Disconnect").setDisabled(syncing()).onClick(async () => {
             try { await this.plugin.disconnect(); } catch (e: unknown) { new Notice(message(e)); }
             this.update();
           }); });
+        } },
+        { name: "Manual bearer token", visible: () => s.source === "cloud", render: setting => {
+          let rawToken = "";
+          let applying = false;
+          let applyButton!: ButtonComponent;
+          setting.setDesc("Fallback authentication for SMS, WeChat, or China server accounts. Paste a BOOX bearer token to skip code login; stored in your system keychain.");
+          const apply = async () => {
+            if (applying || syncing()) return;
+            if (!rawToken.trim()) { new Notice("Enter a BOOX bearer token first."); return; }
+            applying = true;
+            applyButton.setButtonText("Applying…").setDisabled(true);
+            try {
+              await this.plugin.connectWithToken(this.plugin.settings.region || "eur", rawToken);
+              rawToken = "";
+              new Notice("BOOX connected with manual token.");
+              this.update();
+            } catch (e: unknown) {
+              new Notice(message(e));
+              applyButton.setButtonText("Apply token").setDisabled(syncing());
+            } finally {
+              applying = false;
+            }
+          };
+          setting.addText(t => {
+            t.inputEl.placeholder = "Paste bearer token";
+            t.inputEl.type = "password";
+            t.inputEl.autocomplete = "off";
+            t.onChange(v => { rawToken = v; });
+            t.inputEl.addEventListener("keydown", ev => { if (ev.key === "Enter") void apply(); });
+          });
+          setting.addButton(b => {
+            applyButton = b;
+            connectButtons.push(b);
+            b.setButtonText("Apply token").setDisabled(syncing()).onClick(() => apply());
+          });
         } },
         { name: "Sync status", searchable: false, render: setting => {
           let button!: ButtonComponent, wasSyncing = syncing();

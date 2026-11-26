@@ -1,5 +1,5 @@
 import { Plugin, Notice, Platform, requestUrl } from "obsidian";
-import { parseSession, type Session } from "./credentials";
+import { normalizeBearerToken, parseSession, type Session } from "./credentials";
 import { safeFolder } from "./paths";
 import type { BooxSettings, Manifest } from "./types";
 import { BooxClient, type HttpTransport } from "./client";
@@ -110,12 +110,20 @@ export default class BooxSyncPlugin extends Plugin {
   async connectWith(session: Session) {
     if (this.syncing) throw new Error("Wait for the current sync to finish.");
     if (this.unloaded) return;
-    if (!session.uid) session.uid = String((await new BooxClient(session.region, this.transport, session.token).me()).uid);
+    if (!session.uid) {
+      const account = await new BooxClient(session.region, this.transport, session.token).me();
+      session.uid = String(account.uid);
+      if (!session.email) session.email = account.email || account.phone || account.nickname || "";
+    }
     this.app.secretStorage.setSecret(SESSION_SECRET, JSON.stringify(session));
     this.settings.region = session.region;
     this.settings.account = { uid: session.uid, email: session.email };
     await this.saveSettings();
     this.session = session; this.status = "Connected. Ready to sync.";
+  }
+  async connectWithToken(region: string, rawToken: string) {
+    const token = normalizeBearerToken(rawToken);
+    await this.connectWith({ region, token, uid: "", email: "" });
   }
   async disconnect() {
     if (this.syncing) throw new Error("Wait for the current sync to finish.");
